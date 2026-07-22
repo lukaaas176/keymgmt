@@ -125,6 +125,19 @@
       if (!r.ok) throw new Error('save failed');
       return r.json();
     }
+    // Keep a Soll editor in edit mode across the reload a group edit triggers:
+    // set a one-shot flag, reload, and let the editor's init() consume it.
+    function reloadKeepEditing() {
+      sessionStorage.setItem('soll-reedit', '1');
+      location.reload();
+    }
+    function consumeReenterEditing() {
+      if (sessionStorage.getItem('soll-reedit')) {
+        sessionStorage.removeItem('soll-reedit');
+        return true;
+      }
+      return false;
+    }
     // Wire a container of `.soll-cell` buttons for click + drag-paint. Each
     // cell carries data-ck (column kind: group|tp), data-ci (column id) and
     // data-lock (serial); `.on` is its state. Editing is gated by the

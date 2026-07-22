@@ -62,12 +62,15 @@
   function groupEdit() {
     return {
       editing: false,
-      init() { initSollGrid(this.$refs.grid, '{% url 'soll_toggle' %}'); },
+      init() {
+        if (consumeReenterEditing()) this.editing = true;
+        initSollGrid(this.$refs.grid, '{% url 'soll_toggle' %}');
+      },
       async rename() {
         const n = prompt('Gruppe umbenennen:', '{{ group.name|escapejs }}');
         if (!n) return;
         await sollPost('{% url 'group_rename' group.pk %}', {name: n});
-        location.reload();
+        reloadKeepEditing();
       },
       async remove() {
         if (!confirm('Gruppe "{{ group.name|escapejs }}" löschen?')) return;

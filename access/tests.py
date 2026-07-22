@@ -1962,3 +1962,66 @@ class EnsureUserCommandTests(TestCase):
         call_command("ensure_user", stdout=out)
         self.assertEqual(get_user_model().objects.count(), 0)
         self.assertIn("skipping", out.getvalue())
+
+
+class LockTransponderCrudTests(TestCase):
+    """Create / edit / delete locks and transponders from the UI."""
+
+    def test_lock_create_edit_delete(self):
+        r = self.client.post("/locks/new/", {
+            "serial": "DC-99", "door_name": "Neue Tür", "room_number": "42",
+            "location": "MUC.X", "area": ""})
+        self.assertEqual(r.status_code, 302)
+        lk = Lock.objects.get(serial="DC-99")
+        self.assertEqual((lk.door_name, lk.room_number), ("Neue Tür", "42"))
+        # edit: serial is disabled, so a submitted change is ignored
+        r = self.client.post("/locks/DC-99/edit/", {
+            "serial": "DC-CHANGED", "door_name": "Umbenannt", "room_number": "",
+            "location": "", "area": ""})
+        self.assertEqual(r.status_code, 302)
+        lk.refresh_from_db()
+        self.assertEqual(lk.door_name, "Umbenannt")
+        self.assertTrue(Lock.objects.filter(serial="DC-99").exists())
+        self.assertFalse(Lock.objects.filter(serial="DC-CHANGED").exists())
+        # delete cascades the M2M join rows
+        tp = Transponder.objects.create(serial="AAA")
+        tp.locks.add(lk)
+        r = self.client.post("/locks/DC-99/delete/")
+        self.assertEqual(r.status_code, 302)
+        self.assertFalse(Lock.objects.filter(serial="DC-99").exists())
+        self.assertEqual(tp.locks.count(), 0)
+
+    def test_lock_create_duplicate_serial_rejected(self):
+        Lock.objects.create(serial="DC-1", door_name="A")
+        r = self.client.post("/locks/new/", {
+            "serial": "DC-1", "door_name": "B", "room_number": "",
+            "location": "", "area": ""})
+        self.assertEqual(r.status_code, 200)   # re-rendered with a form error
+        self.assertEqual(Lock.objects.filter(serial="DC-1").count(), 1)
+
+    def test_transponder_create_edit_delete(self):
+        r = self.client.post("/transponders/new/", {
+            "serial": "T1", "asta_number": "5", "person_name": "Muster",
+            "locking_system": "", "printed_on": ""})
+        self.assertEqual(r.status_code, 302)
+        tp = Transponder.objects.get(serial="T1")
+        self.assertEqual((tp.person_name, tp.asta_number), ("Muster", 5))
+        r = self.client.post("/transponders/T1/edit/", {
+            "serial": "T1", "asta_number": "", "person_name": "Neu",
+            "locking_system": "", "printed_on": ""})
+        self.assertEqual(r.status_code, 302)
+        tp.refresh_from_db()
+        self.assertEqual(tp.person_name, "Neu")
+        self.assertIsNone(tp.asta_number)
+        self.client.post("/transponders/T1/delete/")
+        self.assertFalse(Transponder.objects.filter(serial="T1").exists())
+
+    def test_create_and_edit_pages_render(self):
+        Lock.objects.create(serial="DC-1", door_name="A")
+        for url in ("/locks/new/", "/transponders/new/", "/locks/DC-1/edit/"):
+            self.assertEqual(self.client.get(url).status_code, 200)
+
+    def test_delete_is_post_only(self):
+        Lock.objects.create(serial="DC-1")
+        self.assertEqual(self.client.get("/locks/DC-1/delete/").status_code, 405)
+        self.assertTrue(Lock.objects.filter(serial="DC-1").exists())

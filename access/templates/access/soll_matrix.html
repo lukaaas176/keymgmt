@@ -124,7 +124,10 @@
           t.label.toLowerCase().includes(q) || t.serial.toLowerCase().includes(q)
         ).slice(0, 30);
       },
-      init() { initSollGrid(this.$refs.grid, '{% url 'soll_toggle' %}'); },
+      init() {
+        if (consumeReenterEditing()) this.editing = true;
+        initSollGrid(this.$refs.grid, '{% url 'soll_toggle' %}');
+      },
       _tpList() { return this.tps ? this.tps.split(',').filter(Boolean) : []; },
       addTp(serial) {
         if (!serial) return;
@@ -139,18 +142,18 @@
         const name = this.newGroup.trim();
         if (!name) return;
         await sollPost('{% url 'group_create' %}', {name});
-        location.reload();
+        reloadKeepEditing();
       },
       async renameGroup(id, cur) {
         const name = prompt('Gruppe umbenennen:', cur);
         if (!name || name === cur) return;
         await sollPost(`/groups/${id}/rename/`, {name});
-        location.reload();
+        reloadKeepEditing();
       },
       async deleteGroup(id, name) {
         if (!confirm(`Gruppe "${name}" löschen? Die Türzuordnung der Gruppe geht verloren (die Soll-Rechte der Transponder bleiben).`)) return;
         await sollPost(`/groups/${id}/delete/`, {});
-        location.reload();
+        reloadKeepEditing();
       },
     };
   }

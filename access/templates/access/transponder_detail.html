@@ -15,6 +15,12 @@
       </div>
     </div>
     <div class="text-right">
+      <div class="flex justify-end gap-2 mb-3">
+        <a href="{% url 'transponder_edit' tp.serial %}" class="btn-ghost !py-1.5">Bearbeiten</a>
+        <form method="post" action="{% url 'transponder_delete' tp.serial %}" onsubmit="return confirm('Transponder {{ tp.serial|escapejs }} wirklich löschen? Alle Zuordnungen gehen verloren.')">{% csrf_token %}
+          <button class="btn-ghost !py-1.5 !text-rose-600">Löschen</button>
+        </form>
+      </div>
       <p class="text-4xl font-display font-semibold text-slate-900 leading-none">{{ active_total }}</p>
       <p class="text-xs text-slate-400 mt-1">aktive Türen</p>
       {% if planned_total or removed_total %}
@@ -136,9 +142,12 @@
       editing: false,
       desiredCount: {{ desired_total }},
       groups: { {% for g in all_groups %}'{{ g.id }}': {{ g.on|yesno:"true,false" }},{% endfor %} },
-      init() { initSollGrid(this.$refs.grid, '{% url 'soll_toggle' %}'); },
+      init() {
+        if (consumeReenterEditing()) this.editing = true;
+        initSollGrid(this.$refs.grid, '{% url 'soll_toggle' %}');
+      },
       async _do(fn) {
-        try { await fn(); location.reload(); }
+        try { await fn(); reloadKeepEditing(); }
         catch (e) { alert('Speichern fehlgeschlagen — bitte erneut versuchen.'); }
       },
       toggleGroup(id) {

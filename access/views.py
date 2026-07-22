@@ -8,10 +8,12 @@ from django.db import transaction
 from django.db.models import Count
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
 
 from . import ocr, pdf_export, soll
+from .forms import LockForm, TransponderForm
 from .models import Group, Lock, Transponder
 from .services import import_pdf
 
@@ -284,6 +286,72 @@ def lock_detail(request, serial):
         "status_cols": status_cols,
         "has_status": bool(keep or remove or planned), "nav": "locks",
     })
+
+
+# --- lock / transponder create · edit · delete ------------------------------
+
+def lock_create(request):
+    form = LockForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        lock = form.save()
+        messages.success(request, f"Tür {lock.serial} angelegt.")
+        return redirect("lock_detail", serial=lock.serial)
+    return render(request, "access/object_form.html", {
+        "form": form, "title": "Neue Tür", "nav": "locks",
+        "back_url": reverse("lock_list")})
+
+
+def lock_edit(request, serial):
+    lock = get_object_or_404(Lock, pk=serial)
+    form = LockForm(request.POST or None, instance=lock)
+    form.fields["serial"].disabled = True       # the serial is the identity
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, f"Tür {lock.serial} gespeichert.")
+        return redirect("lock_detail", serial=lock.serial)
+    return render(request, "access/object_form.html", {
+        "form": form, "title": "Tür bearbeiten", "nav": "locks",
+        "back_url": reverse("lock_detail", args=[lock.serial])})
+
+
+@require_POST
+def lock_delete(request, serial):
+    lock = get_object_or_404(Lock, pk=serial)
+    lock.delete()                               # M2M join rows cascade away
+    messages.success(request, f"Tür {serial} gelöscht.")
+    return redirect("lock_list")
+
+
+def transponder_create(request):
+    form = TransponderForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        tp = form.save()
+        messages.success(request, f"Transponder {tp.serial} angelegt.")
+        return redirect("transponder_detail", serial=tp.serial)
+    return render(request, "access/object_form.html", {
+        "form": form, "title": "Neuer Transponder", "nav": "transponders",
+        "back_url": reverse("transponder_list")})
+
+
+def transponder_edit(request, serial):
+    tp = get_object_or_404(Transponder, pk=serial)
+    form = TransponderForm(request.POST or None, instance=tp)
+    form.fields["serial"].disabled = True
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, f"Transponder {tp.serial} gespeichert.")
+        return redirect("transponder_detail", serial=tp.serial)
+    return render(request, "access/object_form.html", {
+        "form": form, "title": "Transponder bearbeiten", "nav": "transponders",
+        "back_url": reverse("transponder_detail", args=[tp.serial])})
+
+
+@require_POST
+def transponder_delete(request, serial):
+    tp = get_object_or_404(Transponder, pk=serial)
+    tp.delete()
+    messages.success(request, f"Transponder {serial} gelöscht.")
+    return redirect("transponder_list")
 
 
 # --- overlap / groups -------------------------------------------------------

@@ -7,10 +7,13 @@
       <p class="eyebrow">Transponder</p>
       <h1 class="h-title text-3xl mt-1">Transponder</h1>
     </div>
-    <div class="relative w-full sm:w-72">
-      <svg class="absolute left-3 top-2.5 h-4 w-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m21 21-4.3-4.3"/></svg>
-      <input x-model="q" type="search" placeholder="Name oder Seriennr. suchen"
-             class="w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 outline-none">
+    <div class="flex w-full items-center gap-2 sm:w-auto">
+      <div class="relative w-full sm:w-72">
+        <svg class="absolute left-3 top-2.5 h-4 w-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m21 21-4.3-4.3"/></svg>
+        <input x-model="q" type="search" placeholder="Name oder Seriennr. suchen"
+               class="w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 outline-none">
+      </div>
+      <a href="{% url 'transponder_create' %}" class="btn-primary shrink-0 whitespace-nowrap">+ Neuer Transponder</a>
     </div>
   </div>
 
