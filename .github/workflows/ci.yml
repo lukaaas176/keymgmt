@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One run per ref; a newer push cancels an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Django)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (provisions the required Python)
+        uses: astral-sh/setup-uv@v6
+
+      - name: Run the test suite
+        # DEBUG/secret guard and the login gate relax automatically under the
+        # test runner. Typst (PDF export) and scanned-fixture tests skip when
+        # those binaries/fixtures are absent in CI.
+        run: uv run python manage.py test access -v1
+
+  flake-check:
+    name: nix flake check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Evaluate flake (package + NixOS module)
+        run: nix flake check --no-build --all-systems

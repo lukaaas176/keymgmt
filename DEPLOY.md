@@ -45,7 +45,7 @@ flake and enable the service.
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    keymgmt.url = "git+https://your.git.host/keymgmt";   # or github:you/keymgmt
+    keymgmt.url = "github:lukaaas176/keymgmt";
     keymgmt.inputs.nixpkgs.follows = "nixpkgs";
   };
 
