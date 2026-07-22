@@ -24,13 +24,15 @@ class Command(BaseCommand):
                             help="matrix marks to include (default: all)")
         parser.add_argument("--mode", choices=pdf_export.MODES, default="matrix",
                             help="'matrix' or 'diff' (Soll/Ist comparison)")
+        parser.add_argument("--hide-empty", action="store_true",
+                            help="diff only: drop doors with no rights anywhere")
 
     def handle(self, *args, **opts):
         try:
             if opts["mode"] == "changes":
                 data = pdf_export.build_changes_data()
             elif opts["mode"] == "diff":
-                data = pdf_export.build_diff_data()
+                data = pdf_export.build_diff_data(hide_empty=opts["hide_empty"])
             else:
                 data = pdf_export.build_matrix_data(opts["scope"])
             pdf = pdf_export.render_pdf(data, opts["size"])

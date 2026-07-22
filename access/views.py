@@ -101,6 +101,7 @@ def export_pdf(request):
 
     ``?size=a4|a3``; ``?mode=diff`` renders the Soll/Ist comparison, otherwise
     ``?scope=all|active|planned`` selects which marks the matrix shows.
+    ``?empty=hide`` (diff only) drops doors with no rights anywhere.
     """
     mode = request.GET.get("mode")
     mode = mode if mode in pdf_export.MODES else "matrix"
@@ -109,8 +110,10 @@ def export_pdf(request):
     size = size if size in pdf_export.SIZES else ("a4" if mode == "changes" else "a3")
     scope = request.GET.get("scope")
     scope = scope if scope in pdf_export.SCOPES else "all"
+    hide_empty = request.GET.get("empty") == "hide"
     try:
-        pdf = pdf_export.export_matrix_pdf(size=size, scope=scope, mode=mode)
+        pdf = pdf_export.export_matrix_pdf(size=size, scope=scope, mode=mode,
+                                           hide_empty=hide_empty)
     except RuntimeError as exc:   # typst missing / compile failed
         messages.error(request, f"PDF export failed: {exc}")
         return redirect("dashboard")

@@ -1416,6 +1416,20 @@ class PdfExportTests(TestCase):
         self.assertIn("diff", r["Content-Disposition"])
         self.assertTrue(r.getvalue().startswith(b"%PDF"))
 
+    def test_diff_hide_empty_drops_unused_doors(self):
+        # l1 active on a, l2 planned on a; DC-3 has no rights anywhere.
+        Lock.objects.create(serial="DC-3", door_name="Door C", location="Loc3")
+        full = self.pdf_export.build_diff_data()
+        trimmed = self.pdf_export.build_diff_data(hide_empty=True)
+        self.assertIn("DC-3", [d["serial"] for d in full["doors"]])
+        self.assertEqual({d["serial"] for d in trimmed["doors"]}, {"DC-1", "DC-2"})
+        # dropping empty doors changes nothing about the actual diff counts
+        self.assertEqual(trimmed["counts"], full["counts"])
+        # every mark still points at a valid (re-indexed) row
+        max_row = len(trimmed["doors"]) - 1
+        for key in trimmed["marks"]:
+            self.assertLessEqual(int(key.split("-")[1]), max_row)
+
     def test_changes_data_lists_adds_and_removes(self):
         l3 = Lock.objects.create(serial="DC-3", door_name="Door C",
                                  location="Loc3")

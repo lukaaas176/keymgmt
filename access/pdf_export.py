@@ -83,7 +83,8 @@ def build_matrix_data(scope: str = "all", *, today: dt.date | None = None) -> di
                  today=today or dt.date.today(), marks=marks)
 
 
-def build_diff_data(*, today: dt.date | None = None) -> dict:
+def build_diff_data(*, today: dt.date | None = None,
+                     hide_empty: bool = False) -> dict:
     """Assemble the Soll/Ist (wish vs. configured) diff.
 
     Each non-blank cell maps to ``[weight, wished]``: ``weight`` is the
@@ -91,15 +92,30 @@ def build_diff_data(*, today: dt.date | None = None) -> dict:
     door is in ``desired_locks``. The template colours a cell green when the
     two agree (configured ⇔ wished) and red when a door must still be added
     (wished, weight 0) or removed (weight > 0, not wished).
+
+    ``hide_empty`` drops doors that carry no rights at all — no transponder has
+    them active, planned, or wished — so the diff shows only doors that are
+    actually programmed or in the Soll somewhere.
     """
     transponders, doors, row_of = _transponders_and_doors(
         "locks", "planned_locks", "desired_locks")
-    marks: dict[str, list[int]] = {}
-    n_ok = n_add = n_remove = 0
-    for ci, tp in enumerate(transponders):
+    # One pass to read each transponder's sets and collect the doors in use.
+    tp_sets = []
+    used: set[str] = set()
+    for tp in transponders:
         active = {lk.serial for lk in tp.locks.all()}
         planned = {lk.serial for lk in tp.planned_locks.all()}
         desired = {lk.serial for lk in tp.desired_locks.all()}
+        tp_sets.append((active, planned, desired))
+        used |= active | planned | desired
+
+    if hide_empty:
+        doors = [d for d in doors if d.serial in used]
+        row_of = {d.serial: i for i, d in enumerate(doors)}
+
+    marks: dict[str, list[int]] = {}
+    n_ok = n_add = n_remove = 0
+    for ci, (active, planned, desired) in enumerate(tp_sets):
         for serial in active | planned | desired:
             ri = row_of.get(serial)
             if ri is None:
@@ -214,14 +230,17 @@ def render_pdf(data: dict, size: str = "a3") -> bytes:
 
 
 def export_matrix_pdf(size: str = "a3", scope: str = "all",
-                      mode: str = "matrix") -> bytes:
-    """Convenience: build the current DB's matrix (or diff) and render it."""
+                      mode: str = "matrix", hide_empty: bool = False) -> bytes:
+    """Convenience: build the current DB's matrix (or diff) and render it.
+
+    ``hide_empty`` only affects the diff: drop doors with no rights anywhere.
+    """
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
     if mode == "changes":
         data = build_changes_data()
     elif mode == "diff":
-        data = build_diff_data()
+        data = build_diff_data(hide_empty=hide_empty)
     else:
         data = build_matrix_data(scope)
     return render_pdf(data, size)
