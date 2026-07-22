@@ -339,20 +339,27 @@ def _import_matrix(data: "matrix_parser.MatrixResult",
         active = active_by_column.get(p.column)
         planned = planned_by_column.get(p.column)
         removed = removed_by_column.get(p.column)
+        # Each door carries exactly one state in this matrix (bold/thin/hollow),
+        # so activating/planning/removing a door supersedes whatever a prior
+        # import recorded for it — clear the other two buckets to keep the three
+        # sets mutually exclusive (else a re-authorised hollow × would linger in
+        # both locks and removed_locks and be double-counted downstream).
         if active:
             tp.locks.add(*active)
-            # A door that is now active is no longer pending, whatever a
-            # prior import recorded.
             tp.planned_locks.remove(*active)
+            tp.removed_locks.remove(*active)
         if planned:
             # A planned grant that is already active (in this matrix or from
             # an earlier import) needs no second, pending listing.
             already_active = set(tp.locks.all())
             tp.planned_locks.add(*[lk for lk in planned
                                    if lk not in already_active])
+            tp.removed_locks.remove(*planned)
         if removed:
             # Hollow × — still programmed but withdrawn (pending removal).
             tp.removed_locks.add(*removed)
+            tp.locks.remove(*removed)
+            tp.planned_locks.remove(*removed)
 
     n_active = sum(1 for k in data.marks
                    if data.mark_states.get(k, "active") == "active")

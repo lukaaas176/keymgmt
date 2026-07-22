@@ -1822,6 +1822,54 @@ class InheritedAndIndividualTests(TestCase):
         self.assertEqual(z.locks.count(), 0)
         self.assertEqual(z.planned_locks.count(), 0)
 
+    def test_group_list_counts_are_distinct(self):
+        # g1 has 3 doors; give it 2 members. Without distinct=True both counts
+        # would cross-multiply to 3×2 = 6.
+        from access import soll
+        soll.assign_group(self.tp, self.g1)
+        soll.assign_group(Transponder.objects.create(serial="BBB"), self.g1)
+        groups = {g.name: g for g in self.client.get("/groups/").context["groups"]}
+        self.assertEqual(groups["G1"].n, 3)   # doors, not 6
+        self.assertEqual(groups["G1"].m, 2)   # members, not 6
+
+    def test_lock_detail_removed_and_desired_shows_keep(self):
+        # A hollow-× door that the Soll still wants is a re-grant → "Bleibt".
+        d1 = self.L[0]
+        t = Transponder.objects.create(serial="RRR")
+        t.removed_locks.add(d1)
+        t.desired_locks.add(d1)
+        cols = {c["title"]: {it["tp"].serial: it["badge"] for it in c["items"]}
+                for c in self.client.get(f"/locks/{d1.serial}/").context["status_cols"]}
+        self.assertEqual(cols["Bleibt"].get("RRR"), "Soll: behalten")
+        self.assertNotIn("RRR", cols["Wird entfernt"])
+
+    def test_import_reactivation_clears_removed(self):
+        from access import services, ocr
+        tp = Transponder.objects.create(serial="YYY")
+        tp.removed_locks.add(self.L[0])          # prior hollow ×
+        res = ocr.MatrixResult(source_file="x.pdf", ocr_scan=True)
+        res.persons.append(ocr.MatrixPerson(
+            column=1, serial="YYY", raw_serial="YYY", serial_valid=True,
+            serial_suspect=False, asta_number=None, person_name=""))
+        res.doors.append(ocr.MatrixDoor(row=1, name=self.L[0].door_name))
+        res.marks.add((1, 1))
+        res.mark_states[(1, 1)] = "active"       # now a bold ×
+        services._import_matrix(res, "x.pdf")
+        tp.refresh_from_db()
+        self.assertIn(self.L[0], tp.locks.all())              # active now
+        self.assertNotIn(self.L[0], tp.removed_locks.all())   # removed cleared
+
+    def test_set_desired_ignores_inherited_off_toggle(self):
+        from access import soll
+        soll.assign_group(self.tp, self.g1)      # D1 D2 D3 inherited & desired
+        # A replayed/hostile off-toggle of an inherited door must be ignored.
+        soll.set_desired(self.tp, [self.L[0]], wished=False)
+        self.assertIn(self.L[0], self.tp.desired_locks.all())
+        # But a genuinely individual door can still be toggled off.
+        self.tp.desired_locks.add(self.L[3])     # D4 individual
+        soll.set_desired(self.tp, [self.L[3]], wished=False)
+        self.assertNotIn(self.L[3], self.tp.desired_locks.all())
+
 
 GATE_MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

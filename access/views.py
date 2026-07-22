@@ -148,11 +148,21 @@ def transponder_list(request):
 @ensure_csrf_cookie
 def transponder_detail(request, serial):
     tp = get_object_or_404(
-        Transponder.objects.prefetch_related("groups__doors"), pk=serial)
-    active = set(tp.locks.values_list("serial", flat=True))
-    planned = set(tp.planned_locks.values_list("serial", flat=True))
-    desired = set(tp.desired_locks.values_list("serial", flat=True))
-    tp_group_ids = set(tp.groups.values_list("id", flat=True))
+        Transponder.objects.prefetch_related(
+            "groups__doors", "locks", "planned_locks", "removed_locks",
+            "desired_locks"),
+        pk=serial)
+    # Read every relation once, from the prefetch cache (.all()); derive the
+    # serial sets from those objects instead of re-querying with values_list.
+    active_locks = list(tp.locks.all())
+    planned_locks = list(tp.planned_locks.all())
+    removed_locks = list(tp.removed_locks.all())
+    desired_locks = list(tp.desired_locks.all())
+    active = {lk.serial for lk in active_locks}
+    planned = {lk.serial for lk in planned_locks}
+    removed = {lk.serial for lk in removed_locks}
+    desired = {lk.serial for lk in desired_locks}
+    tp_group_ids = {g.id for g in tp.groups.all()}
     # Which doors are inherited from a group (and from which) — inherited doors
     # are shown distinctly and locked in the editor, never as individual grants.
     inherited_from = defaultdict(list)
@@ -163,10 +173,8 @@ def transponder_detail(request, serial):
     # (active × / planned × / hollow ×) *and* the Soll-driven planned change.
     # Each door gets a source `state` and, when the Soll disagrees with it, a
     # `soll` annotation (add / remove / keep / unwished).
-    removed = set(tp.removed_locks.values_list("serial", flat=True))
     relevant = {}
-    for lk in (list(tp.locks.all()) + list(tp.planned_locks.all())
-               + list(tp.removed_locks.all()) + list(tp.desired_locks.all())):
+    for lk in active_locks + planned_locks + removed_locks + desired_locks:
         relevant.setdefault(lk.serial, lk)
     grouped_map = defaultdict(list)
     for s, lk in relevant.items():
@@ -230,10 +238,11 @@ def lock_detail(request, serial):
     desired_serials = {t.serial for t in desirers}
 
     # "Im Soll einzelner Transponder": only those who want this door
-    # *individually* — not through a group that already contains it.
+    # *individually* — not through a group that already contains it. Read groups
+    # from the prefetch cache (.all(), not .values_list which re-queries).
     individual_desirers = [
         t for t in desirers
-        if not (set(t.groups.values_list("id", flat=True)) & lock_group_ids)]
+        if not ({g.id for g in t.groups.all()} & lock_group_ids)]
 
     # Current holders (active ∪ removed are both programmed now) split by fate.
     def item(t, badge=None):
@@ -241,8 +250,14 @@ def lock_detail(request, serial):
     sort_key = lambda it: (it["tp"].asta_number if it["tp"].asta_number
                            is not None else 10 ** 9,
                            it["tp"].person_name or "", it["tp"].serial)
-    keep = [item(t) for t in active if t.serial in desired_serials]
-    remove = ([item(t, "entzogen") for t in removed]           # hollow ×
+    # A hollow-× door that IS wished is being re-granted → "Bleibt" (mirrors the
+    # soll="keep" tag on the transponder page), not "Wird entfernt".
+    keep = ([item(t) for t in active if t.serial in desired_serials]
+            + [item(t, "Soll: behalten") for t in removed
+               if t.serial in desired_serials])
+    keep.sort(key=sort_key)
+    remove = ([item(t, "entzogen") for t in removed          # hollow ×, unwished
+               if t.serial not in desired_serials]
               + [item(t, "nicht im Soll") for t in active
                  if t.serial not in desired_serials])
     remove.sort(key=sort_key)
@@ -441,27 +456,29 @@ def _door_sections():
 @ensure_csrf_cookie
 def soll_matrix(request):
     """Groups × doors matrix (+ optional transponder columns) for editing Soll."""
-    groups = list(Group.objects.all())
+    groups = list(Group.objects.prefetch_related("doors"))
     tp_serials = [s for s in request.GET.get("tp", "").split(",") if s]
     seen, order = set(), []
     for s in tp_serials:                 # de-dup, preserve order
         if s not in seen:
             seen.add(s); order.append(s)
-    tp_by_serial = {t.serial: t for t in
-                    Transponder.objects.filter(serial__in=order)}
+    tp_by_serial = {t.serial: t for t in Transponder.objects
+                    .filter(serial__in=order)
+                    .prefetch_related("groups", "desired_locks")}
     tp_cols = [tp_by_serial[s] for s in order if s in tp_by_serial]
 
-    group_doors = {g.id: set(g.doors.values_list("serial", flat=True))
-                   for g in groups}
-    tp_desired = {t.serial: set(t.desired_locks.values_list("serial", flat=True))
+    # Read door/desired/group sets from the prefetch caches (.all()), not
+    # values_list (which re-queries per group / per column).
+    group_doors = {g.id: {lk.serial for lk in g.doors.all()} for g in groups}
+    tp_desired = {t.serial: {lk.serial for lk in t.desired_locks.all()}
                   for t in tp_cols}
     # Doors a transponder gets via its groups — these are inherited (shown
     # distinctly, and not individually toggleable in the editor).
     tp_inherited = {}
     for t in tp_cols:
         inh = set()
-        for gid in t.groups.values_list("id", flat=True):
-            inh |= group_doors.get(gid, set())
+        for g in t.groups.all():
+            inh |= group_doors.get(g.id, set())
         tp_inherited[t.serial] = inh
     columns = ([{"kind": "group", "id": g.id, "name": g.name} for g in groups]
                + [{"kind": "tp", "id": t.serial, "name": t.label} for t in tp_cols])
@@ -573,7 +590,10 @@ def group_delete(request, pk):
 
 @ensure_csrf_cookie
 def group_list(request):
-    groups = (Group.objects.annotate(n=Count("doors"), m=Count("transponders"))
+    # distinct=True: without it the two M2M joins cross-multiply and both
+    # counts collapse to doors×transponders.
+    groups = (Group.objects.annotate(n=Count("doors", distinct=True),
+                                     m=Count("transponders", distinct=True))
               .order_by("name"))
     return render(request, "access/group_list.html",
                   {"groups": groups, "nav": "soll"})

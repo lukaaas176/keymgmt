@@ -61,7 +61,7 @@
         {% for t in desirers %}
         <li class="flex items-center justify-between gap-3 py-1.5" data-serial="{{ t.serial }}">
           <a href="{% url 'transponder_detail' t.serial %}" class="text-sm text-slate-700 hover:text-indigo-600 min-w-0 truncate">{{ t.label }} <span class="text-slate-300 font-mono text-xs">{{ t.serial }}</span></a>
-          <button x-show="editing" @click="remove('{{ t.serial }}', $event)" class="text-slate-300 hover:text-rose-600 shrink-0" title="Aus Soll entfernen">×</button>
+          <button x-show="editing" @click="remove('{{ t.serial|escapejs }}', $event)" class="text-slate-300 hover:text-rose-600 shrink-0" title="Aus Soll entfernen">×</button>
         </li>
         {% empty %}
         <li class="text-sm text-slate-400 py-1.5" data-empty>Keine.</li>
@@ -113,12 +113,12 @@
       async add(serial) {
         if (!serial) return;
         await sollPost('{% url 'soll_toggle' %}',
-          {ops: [{kind: 'tp', id: serial, on: true, locks: ['{{ lock.serial }}']}]});
+          {ops: [{kind: 'tp', id: serial, on: true, locks: ['{{ lock.serial|escapejs }}']}]});
         location.reload();
       },
       async remove(serial, e) {
         await sollPost('{% url 'soll_toggle' %}',
-          {ops: [{kind: 'tp', id: serial, on: false, locks: ['{{ lock.serial }}']}]});
+          {ops: [{kind: 'tp', id: serial, on: false, locks: ['{{ lock.serial|escapejs }}']}]});
         e.target.closest('li').remove();
       },
     };

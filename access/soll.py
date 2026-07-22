@@ -37,21 +37,37 @@ def _as_locks(locks) -> list[Lock]:
     return locks
 
 
-def _other_group_doors(tp: Transponder, exclude: Group) -> set[str]:
-    """Serials desired via the transponder's *other* groups."""
+def _group_door_serials(tp: Transponder, exclude: Group | None = None) -> set[str]:
+    """Door serials the transponder inherits from its groups (optionally
+    excluding one group). Reads from the prefetch cache (.all())."""
+    qs = tp.groups.all()
+    if exclude is not None:
+        qs = qs.exclude(pk=exclude.pk)
     doors: set[str] = set()
-    for g in tp.groups.exclude(pk=exclude.pk).prefetch_related("doors"):
-        doors.update(g.doors.values_list("serial", flat=True))
+    for g in qs.prefetch_related("doors"):
+        doors.update(lk.serial for lk in g.doors.all())
     return doors
 
 
 @transaction.atomic
 def set_desired(tp: Transponder, locks, wished: bool) -> None:
-    """Add/remove locks in a transponder's desired set (individual edit)."""
+    """Add/remove locks in a transponder's desired set (individual edit).
+
+    Group-inherited doors are never removed here: the editor locks those cells,
+    and the server enforces it too — an off-toggle for a door the transponder
+    still gets from a group is ignored (removing it would desync desired_locks
+    from group membership).
+    """
     locks = _as_locks(locks)
     if not locks:
         return
-    (tp.desired_locks.add if wished else tp.desired_locks.remove)(*locks)
+    if wished:
+        tp.desired_locks.add(*locks)
+        return
+    inherited = _group_door_serials(tp)
+    drop = [lk for lk in locks if lk.serial not in inherited]
+    if drop:
+        tp.desired_locks.remove(*drop)
 
 
 @transaction.atomic
@@ -67,7 +83,7 @@ def set_group_doors(group: Group, locks, included: bool) -> None:
     else:
         group.doors.remove(*locks)
         for tp in group.transponders.all():
-            keep = _other_group_doors(tp, group)
+            keep = _group_door_serials(tp, exclude=group)
             drop = [lk for lk in locks if lk.serial not in keep]
             if drop:
                 tp.desired_locks.remove(*drop)
@@ -82,7 +98,7 @@ def assign_group(tp: Transponder, group: Group) -> None:
 @transaction.atomic
 def unassign_group(tp: Transponder, group: Group) -> None:
     tp.groups.remove(group)
-    keep = _other_group_doors(tp, group)
+    keep = _group_door_serials(tp, exclude=group)
     drop = [lk for lk in group.doors.all() if lk.serial not in keep]
     if drop:
         tp.desired_locks.remove(*drop)

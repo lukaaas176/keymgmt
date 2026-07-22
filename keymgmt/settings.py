@@ -46,7 +46,12 @@ def _secret_key():
         return val
     path = _env("KEYMGMT_SECRET_KEY_FILE")
     if path and Path(path).exists():
-        return Path(path).read_text().strip()
+        # A present-but-blank secret file (provisioning race, touched placeholder)
+        # must fall through to the insecure fallback so the boot guard below
+        # refuses to start, rather than yielding SECRET_KEY="" (which slips the
+        # guard and 500s every request instead).
+        if key := Path(path).read_text().strip():
+            return key
     return _INSECURE_KEY
 
 
