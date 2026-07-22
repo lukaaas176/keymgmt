@@ -46,7 +46,9 @@ def _meta(transponders, doors, **extra):
         "title": "Schließmatrix",
         "generated": extra.pop("today", dt.date.today()).isoformat(),
         "transponders": [{"label": t.label, "serial": t.serial,
-                   "asta": t.asta_number} for t in transponders],
+                   "asta": t.asta_number,
+                   "groups": [g.name for g in t.groups.all()]}
+                  for t in transponders],
         "doors": [{"name": d.door_name or d.serial, "serial": d.serial,
                    "location": d.location or d.area or ""} for d in doors],
         **extra,
@@ -63,7 +65,8 @@ def build_matrix_data(scope: str = "all", *, today: dt.date | None = None) -> di
     if scope not in SCOPES:
         raise ValueError(f"scope must be one of {SCOPES}, got {scope!r}")
 
-    transponders, doors, row_of = _transponders_and_doors("locks", "planned_locks")
+    transponders, doors, row_of = _transponders_and_doors(
+        "locks", "planned_locks", "groups")
     marks: dict[str, int] = {}
     for ci, tp in enumerate(transponders):
         active = {lk.serial for lk in tp.locks.all()}
@@ -98,7 +101,7 @@ def build_diff_data(*, today: dt.date | None = None,
     diff shows only doors that are programmed or in the Soll somewhere.
     """
     transponders, doors, row_of = _transponders_and_doors(
-        "locks", "planned_locks", "desired_locks", "removed_locks")
+        "locks", "planned_locks", "desired_locks", "removed_locks", "groups")
     # One pass to read each transponder's sets and collect the doors in use.
     tp_sets = []
     used: set[str] = set()

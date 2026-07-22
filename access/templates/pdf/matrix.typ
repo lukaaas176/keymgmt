@@ -21,10 +21,11 @@
 #let rowh = 11pt
 #let labelw = 186pt
 #let headerh = 150pt
+#let groupbandh = 74pt      // band of rotated group names above the columns
 #let heading-h = if diff { 34pt } else { 18pt }
 
 #let cols-pp = calc.floor((pw - 2 * margin - labelw) / cell)
-#let rows-pp = calc.floor((ph - 2 * margin - headerh - heading-h - 22pt) / rowh)
+#let rows-pp = calc.floor((ph - 2 * margin - groupbandh - headerh - heading-h - 22pt) / rowh)
 
 #let transponders = data.transponders
 #let doors = data.doors
@@ -102,6 +103,17 @@
   })
 
   let cells = ()
+  // Group band: rotated group name(s) over each transponder column.
+  cells.push(box(height: groupbandh, inset: 2pt,
+    align(bottom + left, text(6pt, fill: luma(120))[GRUPPE])))
+  for c in tblk {
+    let g = if c.groups.len() > 0 { c.groups.join(", ") } else { "" }
+    cells.push(box(height: groupbandh, width: cell, inset: (bottom: 3pt),
+      align(bottom + center,
+        rotate(-90deg, reflow: true,
+          box(width: groupbandh - 8pt,
+            if g != "" { text(5.5pt, fill: rgb("#4f46e5"), weight: "medium")[#trunc(g, 22)] } else [])))))
+  }
   cells.push(box(height: headerh, inset: 2pt,
     align(bottom + left, text(6pt, fill: luma(120))[NAME (TÜREN / SCHLIESSUNGEN)])))
   for c in tblk {
@@ -139,7 +151,7 @@
 
   grid(
     columns: (labelw, ..range(n).map(_ => cell)),
-    rows: (headerh, ..range(dblk.len()).map(_ => rowh)),
+    rows: (groupbandh, headerh, ..range(dblk.len()).map(_ => rowh)),
     stroke: 0.3pt + luma(205),
     ..cells,
   )

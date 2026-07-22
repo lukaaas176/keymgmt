@@ -1435,6 +1435,18 @@ class PdfExportTests(TestCase):
         for key in trimmed["marks"]:
             self.assertLessEqual(int(key.split("-")[1]), max_row)
 
+    def test_export_includes_group_names(self):
+        g = Group.objects.create(name="G1")
+        self.a.groups.add(g)
+        by = {t["serial"]: t
+              for t in self.pdf_export.build_matrix_data("all")["transponders"]}
+        self.assertEqual(by["AAA"]["groups"], ["G1"])
+        self.assertEqual(by["BBB"]["groups"], [])   # no group
+        # the diff export carries it too
+        by_diff = {t["serial"]: t
+                   for t in self.pdf_export.build_diff_data()["transponders"]}
+        self.assertEqual(by_diff["AAA"]["groups"], ["G1"])
+
     def test_changes_data_lists_adds_and_removes(self):
         l3 = Lock.objects.create(serial="DC-3", door_name="Door C",
                                  location="Loc3")
