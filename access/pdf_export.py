@@ -94,11 +94,11 @@ def build_diff_data(*, today: dt.date | None = None,
     (wished, weight 0) or removed (weight > 0, not wished).
 
     ``hide_empty`` drops doors that carry no rights at all — no transponder has
-    them active, planned, or wished — so the diff shows only doors that are
-    actually programmed or in the Soll somewhere.
+    them active, planned, wished, or as a pending removal (hollow ×) — so the
+    diff shows only doors that are programmed or in the Soll somewhere.
     """
     transponders, doors, row_of = _transponders_and_doors(
-        "locks", "planned_locks", "desired_locks")
+        "locks", "planned_locks", "desired_locks", "removed_locks")
     # One pass to read each transponder's sets and collect the doors in use.
     tp_sets = []
     used: set[str] = set()
@@ -106,8 +106,9 @@ def build_diff_data(*, today: dt.date | None = None,
         active = {lk.serial for lk in tp.locks.all()}
         planned = {lk.serial for lk in tp.planned_locks.all()}
         desired = {lk.serial for lk in tp.desired_locks.all()}
+        removed = {lk.serial for lk in tp.removed_locks.all()}
         tp_sets.append((active, planned, desired))
-        used |= active | planned | desired
+        used |= active | planned | desired | removed
 
     if hide_empty:
         doors = [d for d in doors if d.serial in used]

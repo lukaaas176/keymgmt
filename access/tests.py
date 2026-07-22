@@ -1417,12 +1417,17 @@ class PdfExportTests(TestCase):
         self.assertTrue(r.getvalue().startswith(b"%PDF"))
 
     def test_diff_hide_empty_drops_unused_doors(self):
-        # l1 active on a, l2 planned on a; DC-3 has no rights anywhere.
+        # l1 active on a, l2 planned on a; DC-3 has no rights; DC-4 is only a
+        # hollow-× (pending removal) — which still counts as a right to keep.
         Lock.objects.create(serial="DC-3", door_name="Door C", location="Loc3")
+        l4 = Lock.objects.create(serial="DC-4", door_name="Door D", location="Loc4")
+        self.a.removed_locks.add(l4)
         full = self.pdf_export.build_diff_data()
         trimmed = self.pdf_export.build_diff_data(hide_empty=True)
         self.assertIn("DC-3", [d["serial"] for d in full["doors"]])
-        self.assertEqual({d["serial"] for d in trimmed["doors"]}, {"DC-1", "DC-2"})
+        # DC-3 (no rights) dropped; DC-4 (hollow ×) kept alongside active/planned.
+        self.assertEqual({d["serial"] for d in trimmed["doors"]},
+                         {"DC-1", "DC-2", "DC-4"})
         # dropping empty doors changes nothing about the actual diff counts
         self.assertEqual(trimmed["counts"], full["counts"])
         # every mark still points at a valid (re-indexed) row
