@@ -395,45 +395,47 @@ def individual_access(request):
     """Look up every transponder's *individual* access — doors it holds that are
     **not** provided by any group it belongs to.
 
-    Two bases via ``?scope``: ``active`` (currently programmed) or ``soll`` (the
-    target Soll / ``desired`` state — the default). Group-inherited doors are
-    excluded either way. In the Soll view each door is tagged by its programming
-    reality: ``active`` (already there), ``planned`` (pending), or ``add`` (in
-    the Soll but not yet programmed).
+    Two bases via ``?scope``: ``ist`` (currently programmed — active ∪ planned ∪
+    hollow-×) or ``soll`` (the target ``desired`` state — the default).
+    Group-inherited doors are excluded either way. Each door is tagged by its
+    programming reality: ``active`` (programmed), ``planned`` (pending),
+    ``removed`` (hollow ×, pending removal), or ``add`` (in the Soll but not yet
+    programmed).
     """
-    scope = "active" if request.GET.get("scope") == "active" else "soll"
+    scope = "ist" if request.GET.get("scope") in ("ist", "active") else "soll"
     tps = (Transponder.objects
-           .prefetch_related("locks", "planned_locks", "desired_locks",
-                             "groups__doors")
+           .prefetch_related("locks", "planned_locks", "removed_locks",
+                             "desired_locks", "groups__doors")
            .order_by("asta_number", "person_name", "serial"))
     rows = []
     n_grants = 0
     for tp in tps:
         active_locks = list(tp.locks.all())
         planned_locks = list(tp.planned_locks.all())
+        removed_locks = list(tp.removed_locks.all())
         desired_locks = list(tp.desired_locks.all())
         active = {lk.serial for lk in active_locks}
         planned = {lk.serial for lk in planned_locks}
+        removed = {lk.serial for lk in removed_locks}
         desired = {lk.serial for lk in desired_locks}
         group_doors = set()
         for g in tp.groups.all():
             group_doors |= {lk.serial for lk in g.doors.all()}
-        basis = active if scope == "active" else desired
+        # Ist = everything currently programmed or pending; Soll = the wish.
+        basis = desired if scope == "soll" else (active | planned | removed)
         individual = basis - group_doors
         if not individual:
             continue
         by_serial = {lk.serial: lk for lk in
-                     active_locks + planned_locks + desired_locks}
+                     active_locks + planned_locks + removed_locks + desired_locks}
         doors = []
         for serial in individual:
             lk = by_serial.get(serial)
             if lk is None:
                 continue
-            if scope == "active":
-                state = "active"
-            else:
-                state = ("active" if serial in active else
-                         "planned" if serial in planned else "add")
+            state = ("active" if serial in active else
+                     "planned" if serial in planned else
+                     "removed" if serial in removed else "add")
             doors.append({"lock": lk, "state": state})
         doors.sort(key=lambda d: (d["lock"].location or "", d["lock"].label))
         n_grants += len(doors)

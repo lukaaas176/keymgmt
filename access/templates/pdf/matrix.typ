@@ -108,9 +108,7 @@
     cells.push(box(height: headerh, width: cell, inset: (bottom: 3pt),
       align(bottom + center,
         rotate(-90deg, reflow: true,
-          box(width: headerh - 8pt, text(6.5pt)[
-            #trunc(c.label, 28)#if c.label != c.serial [ #text(size: 5.5pt, fill: luma(140))[· #c.serial]]
-          ])))))
+          box(width: headerh - 8pt, text(6.5pt)[#trunc(c.label, 28)#if c.label != c.serial [ #text(size: 5.5pt, fill: luma(140))[· #c.serial]]])))))
   }
   for (i, d) in dblk.enumerate() {
     let loc = if d.location != "" [ #text(fill: luma(160))[· #trunc(d.location, 16)]] else []

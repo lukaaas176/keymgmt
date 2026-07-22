@@ -6,7 +6,7 @@
     <div>
       <p class="eyebrow">Rechte-Prüfung</p>
       <h1 class="h-title text-3xl mt-1">Individuelle Rechte</h1>
-      <p class="mt-2 text-slate-500 max-w-2xl">Türen, die ein Transponder individuell hat, aber <span class="font-medium">nicht</span> über eine seiner Gruppen. Umschaltbar zwischen dem <span class="font-medium">Soll</span> (Ziel-Zustand) und dem aktuellen <span class="font-medium">Ist</span> (aktiv programmiert). Zugang, der vollständig aus Gruppen stammt, erscheint hier nicht.</p>
+      <p class="mt-2 text-slate-500 max-w-2xl">Türen, die ein Transponder individuell hat, aber <span class="font-medium">nicht</span> über eine seiner Gruppen. Umschaltbar zwischen dem <span class="font-medium">Soll</span> (Ziel-Zustand) und dem aktuellen <span class="font-medium">Ist</span> (programmiert). Zugang, der vollständig aus Gruppen stammt, erscheint hier nicht.</p>
     </div>
     <div class="relative w-full sm:w-72">
       <svg class="absolute left-3 top-2.5 h-4 w-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m21 21-4.3-4.3"/></svg>
@@ -18,9 +18,9 @@
   <div class="mt-4 flex flex-wrap items-center gap-3">
     <div class="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-sm">
       <a href="?scope=soll" class="px-3 py-1.5 rounded-md transition {% if scope == 'soll' %}bg-white shadow-sm text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-700{% endif %}">Soll (Ziel)</a>
-      <a href="?scope=active" class="px-3 py-1.5 rounded-md transition {% if scope == 'active' %}bg-white shadow-sm text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-700{% endif %}">Aktiv (Ist)</a>
+      <a href="?scope=ist" class="px-3 py-1.5 rounded-md transition {% if scope == 'ist' %}bg-white shadow-sm text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-700{% endif %}">Ist (programmiert)</a>
     </div>
-    <p class="text-xs text-slate-400">{% if scope == 'active' %}Nur die aktuell programmierten individuellen Rechte.{% else %}Individuelle Rechte im Soll (Ziel-Zustand).{% endif %}</p>
+    <p class="text-xs text-slate-400">{% if scope == 'ist' %}Aktuell programmierte individuelle Rechte (aktiv, geplant, wird&nbsp;entfernt).{% else %}Individuelle Rechte im Soll (Ziel-Zustand).{% endif %}</p>
   </div>
 
   <div class="mt-5 flex flex-wrap gap-x-8 gap-y-2">
@@ -48,10 +48,10 @@
       <ul class="divide-y divide-slate-100">
         {% for d in row.doors %}
         <li class="flex items-center gap-3 px-4 py-1.5 text-sm">
-          <span class="h-1.5 w-1.5 shrink-0 rounded-full {% if d.state == 'active' %}bg-emerald-500{% elif d.state == 'planned' %}bg-amber-400{% else %}bg-indigo-500{% endif %}"></span>
+          <span class="h-1.5 w-1.5 shrink-0 rounded-full {% if d.state == 'active' %}bg-emerald-500{% elif d.state == 'planned' %}bg-amber-400{% elif d.state == 'removed' %}bg-rose-500{% else %}bg-indigo-500{% endif %}"></span>
           <a href="{% url 'lock_detail' d.lock.serial %}" class="text-slate-700 hover:text-indigo-600 min-w-0 truncate">{{ d.lock.label }}</a>
           {% if d.lock.location %}<span class="text-xs text-slate-400">{{ d.lock.location }}</span>{% endif %}
-          <span class="ml-auto text-[10px] uppercase tracking-wide {% if d.state == 'active' %}text-emerald-600{% elif d.state == 'planned' %}text-amber-600{% else %}text-indigo-600{% endif %}">{% if d.state == 'active' %}aktiv{% elif d.state == 'planned' %}geplant{% else %}hinzufügen{% endif %}</span>
+          <span class="ml-auto text-[10px] uppercase tracking-wide {% if d.state == 'active' %}text-emerald-600{% elif d.state == 'planned' %}text-amber-600{% elif d.state == 'removed' %}text-rose-600{% else %}text-indigo-600{% endif %}">{% if d.state == 'active' %}aktiv{% elif d.state == 'planned' %}geplant{% elif d.state == 'removed' %}wird entfernt{% else %}hinzufügen{% endif %}</span>
         </li>
         {% endfor %}
       </ul>

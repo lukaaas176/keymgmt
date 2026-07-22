@@ -1782,14 +1782,27 @@ class InheritedAndIndividualTests(TestCase):
         states = {d["lock"].serial: d["state"] for d in ctx["rows"][0]["doors"]}
         self.assertEqual(states, {"D4": "add"})
 
-    def test_individual_active_scope_uses_programming(self):
+    def test_individual_ist_scope_includes_planned_and_removed(self):
+        # Ist = active ∪ planned ∪ hollow-×; ?scope=active maps to ist.
         from access import soll
         soll.assign_group(self.tp, self.g1)          # D1 D2 D3
-        self.tp.locks.set([self.L[0], self.L[3]])    # active: D1(group), D4
+        self.tp.locks.set([self.L[0], self.L[2]])    # active: D1(group), D3(group)
+        self.tp.planned_locks.set([self.L[3]])       # planned: D4 (individual)
+        self.tp.removed_locks.set([self.L[4]])       # hollow ×: D5 (individual)
         ctx = self.client.get("/individual/?scope=active").context
-        self.assertEqual(ctx["scope"], "active")
+        self.assertEqual(ctx["scope"], "ist")
         states = {d["lock"].serial: d["state"] for d in ctx["rows"][0]["doors"]}
-        self.assertEqual(states, {"D4": "active"})   # D1 excluded (group)
+        self.assertEqual(states, {"D4": "planned", "D5": "removed"})  # groups excl.
+
+    def test_individual_soll_removed_is_conflict_not_add(self):
+        # A wished door that is currently a hollow-× shows 'removed', not 'add'.
+        from access import soll
+        soll.assign_group(self.tp, self.g1)
+        self.tp.desired_locks.add(self.L[3])         # D4 individual Soll
+        self.tp.removed_locks.add(self.L[3])         # but currently pending removal
+        ctx = self.client.get("/individual/").context
+        states = {d["lock"].serial: d["state"] for d in ctx["rows"][0]["doors"]}
+        self.assertEqual(states, {"D4": "removed"})
 
     def test_individual_omits_covered_and_keeps_groupless(self):
         from access import soll
