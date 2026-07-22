@@ -1,0 +1,80 @@
+{% extends "access/base.html" %}
+{% block title %}{{ group.name }} · Gruppe{% endblock %}
+{% block content %}
+<a href="{% url 'group_list' %}" class="text-sm text-slate-500 hover:text-slate-800">&larr; Gruppen</a>
+
+<div x-data="groupEdit()" class="mt-3">
+  <div class="flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <p class="eyebrow">Gruppe · Ziel-Zustand</p>
+      <h1 class="h-title text-3xl mt-1">{{ group.name }}</h1>
+      <p class="mt-1 text-sm text-slate-500">Türen dieser Gruppe. Änderungen wirken sofort auf alle zugewiesenen Transponder.</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button @click="editing=!editing" class="btn-primary" :class="editing ? 'bg-emerald-600 hover:bg-emerald-500' : ''">
+        <span x-text="editing ? '✓ Fertig' : '✎ Türen bearbeiten'"></span>
+      </button>
+      <button @click="rename()" class="btn-ghost">Umbenennen</button>
+      <button @click="remove()" class="btn-ghost !text-rose-600">Löschen</button>
+    </div>
+  </div>
+
+  <div class="mt-6 grid gap-6 lg:grid-cols-[1fr,16rem]">
+    <div class="card p-0 overflow-hidden">
+      <div class="soll-grid" x-ref="grid" :class="{editing: editing}">
+        {% for sec in sections %}
+        <div class="flex items-center gap-2 px-4 py-1.5 bg-slate-50 border-y border-slate-100">
+          <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{{ sec.location }}</p>
+        </div>
+        <ul class="divide-y divide-slate-100">
+          {% for row in sec.rows %}
+          <li class="flex items-center gap-3 px-4 py-1.5">
+            <div class="soll-cell shrink-0 {% if row.on %}on{% endif %}"
+                 data-ck="group" data-ci="{{ group.pk }}" data-lock="{{ row.lock.serial }}">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7.5 7.5a1 1 0 0 1-1.4 0L3.3 10a1 1 0 1 1 1.4-1.4l3.3 3.3 6.8-6.8a1 1 0 0 1 1.4 0z" clip-rule="evenodd"/></svg>
+            </div>
+            <a href="{% url 'lock_detail' row.lock.serial %}" class="text-sm text-slate-700 hover:text-indigo-600 min-w-0 truncate">{{ row.lock.label }}</a>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div>
+      <p class="eyebrow">Zugewiesene Transponder</p>
+      <div class="mt-2 card p-4 max-h-[32rem] overflow-auto">
+        <ul class="space-y-1 text-sm">
+          {% for t in members %}
+          <li><a href="{% url 'transponder_detail' t.serial %}" class="text-slate-700 hover:text-indigo-600">{{ t.label }}</a> <span class="text-slate-300 font-mono text-xs">{{ t.serial }}</span></li>
+          {% empty %}
+          <li class="text-slate-400">Keine.</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function groupEdit() {
+    return {
+      editing: false,
+      init() { initSollGrid(this.$refs.grid, '{% url 'soll_toggle' %}'); },
+      async rename() {
+        const n = prompt('Gruppe umbenennen:', '{{ group.name|escapejs }}');
+        if (!n) return;
+        await sollPost('{% url 'group_rename' group.pk %}', {name: n});
+        location.reload();
+      },
+      async remove() {
+        if (!confirm('Gruppe "{{ group.name|escapejs }}" löschen?')) return;
+        await sollPost('{% url 'group_delete' group.pk %}', {});
+        location.href = '{% url 'group_list' %}';
+      },
+    };
+  }
+</script>
+{% endblock %}

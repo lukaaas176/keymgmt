@@ -1,0 +1,158 @@
+{% extends "access/base.html" %}
+{% block title %}Soll-Matrix · Schließmatrix{% endblock %}
+{% block content %}
+<div x-data="sollMatrix()">
+  <div class="flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <p class="eyebrow">Ziel-Zustand</p>
+      <h1 class="h-title text-3xl mt-1">Soll-Matrix</h1>
+      <p class="mt-2 text-slate-500 max-w-2xl">Gruppen (Spalten) × Türen (Zeilen, nach Gebäude). Im <span class="font-medium">Bearbeiten</span>-Modus Zellen klicken oder mit gedrückter Maustaste über mehrere ziehen, um Türen einer Gruppe – oder eines einzelnen Transponders – zu- oder abzuwählen.</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <button @click="editing=!editing" class="btn-primary"
+              :class="editing ? 'bg-emerald-600 hover:bg-emerald-500' : ''">
+        <span x-text="editing ? '✓ Fertig' : '✎ Bearbeiten'"></span>
+      </button>
+      <a href="{% url 'group_list' %}" class="btn-ghost">Gruppen verwalten</a>
+      <a href="{% url 'export_pdf' %}?mode=changes" class="btn-ghost" target="_blank" rel="noopener">Änderungsliste (PDF)</a>
+    </div>
+  </div>
+
+  <!-- edit controls -->
+  <div class="mt-4 flex flex-wrap items-center gap-2" x-show="editing" x-transition style="display:none">
+    <form @submit.prevent="createGroup()" class="flex items-center gap-1.5">
+      <input x-model="newGroup" placeholder="Neue Gruppe…" class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm">
+      <button class="btn-ghost !py-1.5">+ Gruppe</button>
+    </form>
+    <div class="relative" @click.outside="tpOpen=false">
+      <input x-model="tpQuery" @focus="tpOpen=true" @keydown.escape="tpOpen=false"
+             placeholder="+ Transponder suchen…" autocomplete="off"
+             class="w-64 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm">
+      <div x-show="tpOpen && tpQuery.trim().length" x-transition style="display:none"
+           class="absolute z-30 mt-1 w-72 max-h-64 overflow-auto card p-1">
+        <template x-for="t in tpMatches" :key="t.serial">
+          <button type="button" @click="addTp(t.serial)"
+                  class="block w-full text-left px-2 py-1.5 rounded hover:bg-indigo-50 text-sm">
+            <span x-text="t.label"></span>
+            <span class="text-slate-400 font-mono text-xs" x-text="t.serial"></span>
+          </button>
+        </template>
+        <div x-show="!tpMatches.length" class="px-2 py-1.5 text-sm text-slate-400">Keine Treffer.</div>
+      </div>
+    </div>
+  </div>
+  {{ tp_options|json_script:"tp-options" }}
+
+  <div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+    <span class="inline-flex items-center gap-1.5"><span class="h-4 w-4 rounded bg-indigo-600 ring-1 ring-inset ring-indigo-600"></span> individuell (Transponder) bzw. Gruppentür</span>
+    <span class="inline-flex items-center gap-1.5"><span class="h-4 w-4 rounded bg-violet-100 ring-1 ring-inset ring-violet-300"></span> aus Gruppe geerbt – nur über die Gruppe änderbar</span>
+  </div>
+
+  {% if not columns %}
+  <div class="mt-6 card p-10 text-center text-slate-500">Noch keine Gruppen. Lege oben eine an.</div>
+  {% else %}
+  <div class="mt-6 card overflow-auto">
+    <div class="soll-grid" x-ref="grid" :class="{editing: editing}">
+      <table class="border-separate text-sm" style="border-spacing:0">
+        <thead>
+          <tr>
+            <th class="sticky left-0 top-0 z-20 bg-white px-3 py-2 text-left text-xs font-medium text-slate-400 border-b border-slate-200">Tür</th>
+            {% for c in columns %}
+            <th class="sticky top-0 z-10 bg-white px-1.5 py-2 align-bottom border-b border-l border-slate-100 {% if c.kind == 'tp' %}bg-amber-50/60{% endif %}">
+              <div class="flex flex-col items-center gap-1 w-24">
+                <span class="text-[10px] font-semibold uppercase tracking-wide {% if c.kind == 'group' %}text-indigo-600{% else %}text-amber-600{% endif %}">{% if c.kind == 'group' %}Gruppe{% else %}Transponder{% endif %}</span>
+                {% if c.kind == 'group' %}
+                <a href="{% url 'group_detail' c.id %}" class="text-xs font-medium text-slate-700 hover:text-indigo-600 text-center leading-tight">{{ c.name }}</a>
+                <div class="flex gap-1" x-show="editing">
+                  <button @click="renameGroup({{ c.id }}, '{{ c.name|escapejs }}')" class="text-slate-300 hover:text-slate-600" title="Umbenennen">✎</button>
+                  <button @click="deleteGroup({{ c.id }}, '{{ c.name|escapejs }}')" class="text-slate-300 hover:text-rose-600" title="Löschen">🗑</button>
+                </div>
+                {% else %}
+                <a href="{% url 'transponder_detail' c.id %}" class="text-xs font-medium text-slate-700 hover:text-amber-700 text-center leading-tight truncate max-w-[6rem]" title="{{ c.name }}">{{ c.name }}</a>
+                <button @click="removeTp('{{ c.id }}')" class="text-slate-300 hover:text-rose-600" title="Spalte entfernen">×</button>
+                {% endif %}
+              </div>
+            </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for sec in sections %}
+          <tr class="bg-slate-50">
+            <th class="sticky left-0 z-10 bg-slate-50 px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500 border-y border-slate-200">{{ sec.location }}</th>
+            <td class="border-y border-slate-200" colspan="{{ columns|length }}"></td>
+          </tr>
+          {% for row in sec.rows %}
+          <tr class="hover:bg-slate-50/60">
+            <th class="sticky left-0 z-10 bg-white hover:bg-slate-50/60 px-3 py-1 text-left font-normal text-slate-700 border-b border-slate-100 whitespace-nowrap">
+              <a href="{% url 'lock_detail' row.lock.serial %}" class="hover:text-indigo-600">{{ row.lock.label }}</a>
+            </th>
+            {% for cell in row.cells %}
+            <td class="px-1.5 py-0.5 text-center border-b border-l border-slate-100">
+              <div class="soll-cell mx-auto {% if cell.inherited %}inherited{% elif cell.on %}on{% endif %}"
+                   data-ck="{{ cell.kind }}" data-ci="{{ cell.id }}" data-lock="{{ row.lock.serial }}"
+                   {% if cell.inherited %}data-locked="1" title="aus Gruppe geerbt – über die Gruppe ändern"{% endif %}>
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7.5 7.5a1 1 0 0 1-1.4 0L3.3 10a1 1 0 1 1 1.4-1.4l3.3 3.3 6.8-6.8a1 1 0 0 1 1.4 0z" clip-rule="evenodd"/></svg>
+              </div>
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function sollMatrix() {
+    return {
+      editing: false,
+      newGroup: '',
+      tps: '{{ tp_param|escapejs }}',
+      tpQuery: '',
+      tpOpen: false,
+      tpOptions: JSON.parse(document.getElementById('tp-options').textContent),
+      get tpMatches() {
+        const q = this.tpQuery.trim().toLowerCase();
+        if (!q) return [];
+        return this.tpOptions.filter(t =>
+          t.label.toLowerCase().includes(q) || t.serial.toLowerCase().includes(q)
+        ).slice(0, 30);
+      },
+      init() { initSollGrid(this.$refs.grid, '{% url 'soll_toggle' %}'); },
+      _tpList() { return this.tps ? this.tps.split(',').filter(Boolean) : []; },
+      addTp(serial) {
+        if (!serial) return;
+        const list = this._tpList();
+        if (!list.includes(serial)) list.push(serial);
+        location.search = '?tp=' + list.join(',');
+      },
+      removeTp(serial) {
+        location.search = '?tp=' + this._tpList().filter(s => s !== serial).join(',');
+      },
+      async createGroup() {
+        const name = this.newGroup.trim();
+        if (!name) return;
+        await sollPost('{% url 'group_create' %}', {name});
+        location.reload();
+      },
+      async renameGroup(id, cur) {
+        const name = prompt('Gruppe umbenennen:', cur);
+        if (!name || name === cur) return;
+        await sollPost(`/groups/${id}/rename/`, {name});
+        location.reload();
+      },
+      async deleteGroup(id, name) {
+        if (!confirm(`Gruppe "${name}" löschen? Die Türzuordnung der Gruppe geht verloren (die Soll-Rechte der Transponder bleiben).`)) return;
+        await sollPost(`/groups/${id}/delete/`, {});
+        location.reload();
+      },
+    };
+  }
+</script>
+{% endblock %}

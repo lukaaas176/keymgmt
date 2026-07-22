@@ -1,0 +1,201 @@
+{% extends "access/base.html" %}
+{% block title %}Überschneidung · Schließmatrix{% endblock %}
+{% block content %}
+<div x-data="overlap()">
+  <div>
+    <p class="eyebrow">Gemeinsame Rechte</p>
+    <h1 class="h-title text-3xl mt-1">Überschneidung</h1>
+    <p class="mt-2 text-slate-500 max-w-2xl">Wie viele Türen jeder Transponder mit jedem anderen gemeinsam hat. Dunkler heißt mehr gemeinsame Türen (Jaccard-Ähnlichkeit). Auf ein Feld tippen, um zu sehen, welche Türen zwei Transponder teilen.</p>
+    {% if planned_pending %}
+    <div class="mt-4 flex flex-wrap items-center gap-3">
+      <div class="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-sm">
+        <a href="?scope=active" class="px-3 py-1.5 rounded-md transition {% if scope == 'active' %}bg-white shadow-sm text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-700{% endif %}">Aktiv</a>
+        <a href="?scope=planned" class="px-3 py-1.5 rounded-md transition {% if scope == 'planned' %}bg-white shadow-sm text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-700{% endif %}">Geplanter Endzustand</a>
+        <a href="?scope=diff" class="px-3 py-1.5 rounded-md transition {% if scope == 'diff' %}bg-white shadow-sm text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-700{% endif %}">Nur geplante Änderungen</a>
+      </div>
+      <p class="text-xs text-slate-400">
+        {% if scope == 'planned' %}Nach Ausführung aller Terminal-Updates (aktiv&nbsp;+&nbsp;geplant).{% elif scope == 'diff' %}Nur die ausstehenden Grants — zeigt, welche Transponder dieselben neuen Türen bekommen.{% else %}Nur die aktuell programmierten Rechte.{% endif %}
+      </p>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if tps|length < 2 %}
+  <div class="mt-6 card p-10 text-center text-slate-500">Mindestens zwei Transponder importieren, um Zugänge zu vergleichen.</div>
+  {% else %}
+
+  <!-- Heatmap (signature) -->
+  <div class="mt-6 card p-4 sm:p-5">
+    <div class="overflow-x-auto">
+      <table class="border-separate" style="border-spacing:3px">
+        <thead>
+          <tr>
+            <th class="sticky left-0 z-10 bg-white"></th>
+            {% for t in tps %}
+            <th class="w-9 pb-1 text-[11px] font-medium text-slate-400 align-bottom" title="{{ t.label }}">{{ forloop.counter }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for tp, cells in rows %}
+          {% with i=forloop.counter0 %}
+          <tr>
+            <th class="sticky left-0 z-10 bg-white pr-3 text-right text-xs font-medium text-slate-600 whitespace-nowrap">
+              <span class="text-slate-300 font-mono">{{ forloop.counter }}</span>
+              <span class="inline-block max-w-[11rem] truncate align-middle" title="{{ tp.label }}">{{ tp.label }}</span>
+            </th>
+            {% for cell in cells %}
+            <td>
+              <button type="button"
+                @click="pick({{ i }}, {{ forloop.counter0 }})"
+                title="{{ tp.label }} · {{ cell.shared }} gemeinsam · {{ cell.pct }}% ähnlich"
+                class="h-9 w-9 rounded-md grid place-items-center text-[11px] font-mono tabular-nums
+                       ring-1 ring-inset ring-black/5 hover:ring-2 hover:ring-indigo-500 transition
+                       focus:outline-none focus:ring-2 focus:ring-indigo-500
+                       {% if cell.dark %}text-white{% elif cell.shared %}text-slate-700{% else %}text-slate-300{% endif %}
+                       {% if cell.self %}ring-slate-300{% endif %}"
+                style="background-color: rgba({{ accent_rgb }}, {{ cell.alpha }})">{{ cell.shared }}</button>
+            </td>
+            {% endfor %}
+          </tr>
+          {% endwith %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="mt-4 flex items-center gap-3 text-xs text-slate-400">
+      <span>weniger gemeinsam</span>
+      <span class="h-2.5 w-40 rounded-full" style="background:linear-gradient(to right, rgba({{ accent_rgb }},0.08), rgba({{ accent_rgb }},1))"></span>
+      <span>mehr gemeinsam</span>
+      <span class="ml-auto hidden sm:inline">Zahlen = gemeinsame Türen</span>
+    </div>
+  </div>
+
+  <!-- Pair detail panel -->
+  <div id="pair-panel" class="mt-4 card p-5" x-show="a!==null" x-transition style="display:none">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h2 class="h-title text-lg">
+        <span x-text="A?.label"></span>
+        <span class="text-slate-300 font-normal">×</span>
+        <span x-text="B?.label"></span>
+      </h2>
+      <button @click="a=null;b=null" class="text-slate-400 hover:text-slate-700 text-sm">Schließen</button>
+    </div>
+    <div class="mt-4 grid gap-4 md:grid-cols-3">
+      <div>
+        <p class="eyebrow">Gemeinsam (<span x-text="shared().length"></span>)</p>
+        <ul class="mt-2 space-y-1 text-sm text-slate-700 max-h-60 overflow-auto pr-1">
+          <template x-for="d in shared()" :key="d.serial"><li class="flex gap-2"><span class="text-emerald-500">•</span><span x-text="d.name"></span></li></template>
+          <li x-show="!shared().length" class="text-slate-400">Keine gemeinsamen Türen.</li>
+        </ul>
+      </div>
+      <div>
+        <p class="eyebrow">Nur <span x-text="A?.label"></span> (<span x-text="onlyA().length"></span>)</p>
+        <ul class="mt-2 space-y-1 text-sm text-slate-500 max-h-60 overflow-auto pr-1">
+          <template x-for="d in onlyA()" :key="d.serial"><li x-text="d.name"></li></template>
+          <li x-show="!onlyA().length" class="text-slate-400">—</li>
+        </ul>
+      </div>
+      <div>
+        <p class="eyebrow">Nur <span x-text="B?.label"></span> (<span x-text="onlyB().length"></span>)</p>
+        <ul class="mt-2 space-y-1 text-sm text-slate-500 max-h-60 overflow-auto pr-1">
+          <template x-for="d in onlyB()" :key="d.serial"><li x-text="d.name"></li></template>
+          <li x-show="!onlyB().length" class="text-slate-400">—</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Identical-access clone groups -->
+  {% if clone_groups %}
+  <h2 class="h-title text-lg mt-10">Identische Rechte</h2>
+  <p class="mt-1 text-sm text-slate-500">Transponder, die genau dieselben Türen öffnen.</p>
+  <div class="mt-4 grid gap-3 sm:grid-cols-2">
+    {% for group in clone_groups %}
+    <div class="card p-5">
+      <div class="flex items-center justify-between">
+        <p class="font-medium text-slate-900">{{ group.transponders|length }} Transponder, gleiche Rechte</p>
+        <span class="chip">{{ group.doors }} Türen</span>
+      </div>
+      <div class="mt-3 flex flex-wrap gap-2">
+        {% for t in group.transponders %}
+        <a href="{% url 'transponder_detail' t.serial %}" class="inline-flex items-center gap-1.5 rounded-full bg-slate-100 hover:bg-slate-200 transition px-2.5 py-1 text-xs">
+          <span class="text-slate-700">{{ t.label }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Access tiers: locks grouped by who can open them -->
+  {% if tiers %}
+  <h2 class="h-title text-lg mt-10">Zugangsstufen</h2>
+  <p class="mt-1 text-sm text-slate-500">Türen, gruppiert nach der exakten Menge der Transponder, die sie öffnen — die natürlichen gemeinsamen Gruppen.</p>
+  <div class="mt-4 space-y-3">
+    {% for tier in tiers %}
+    <details class="card group">
+      <summary class="p-5 cursor-pointer list-none flex items-center justify-between gap-4">
+        <div class="min-w-0">
+          <p class="font-medium text-slate-900">{{ tier.lock_count }} Tür{{ tier.lock_count|pluralize:"en" }} · {{ tier.holder_count }} Transponder</p>
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            {% for name in tier.holders %}<span class="chip bg-indigo-50 text-indigo-700 ring-indigo-100">{{ name }}</span>{% endfor %}
+          </div>
+        </div>
+        <svg class="h-5 w-5 text-slate-400 shrink-0 transition group-open:rotate-180" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="m6 9 6 6 6-6"/></svg>
+      </summary>
+      <ul class="px-5 pb-5 -mt-1 grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
+        {% for l in tier.locks %}
+        <li class="flex items-center justify-between gap-3 text-sm">
+          <a href="{% url 'lock_detail' l.serial %}" class="text-slate-700 hover:text-indigo-600 truncate">{{ l.door_name|default:l.serial }}</a>
+          <span class="chip shrink-0">{{ l.serial }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% endif %}
+
+  {{ tp_data|json_script:"tp-data" }}
+  {{ lock_names|json_script:"lock-names" }}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function overlap() {
+    return {
+      tp: JSON.parse(document.getElementById('tp-data').textContent),
+      names: JSON.parse(document.getElementById('lock-names').textContent),
+      a: null, b: null,
+      pick(i, j) {
+        this.a = i; this.b = j;
+        this.$nextTick(() => document.getElementById('pair-panel')
+          .scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+      },
+      get A() { return this.a === null ? null : this.tp[this.a]; },
+      get B() { return this.b === null ? null : this.tp[this.b]; },
+      _names(serials) { return serials.map(s => ({ serial: s, name: this.names[s] || s })).sort((x, y) => x.name.localeCompare(y.name)); },
+      shared() {
+        if (this.A === null || this.B === null) return [];
+        const sb = new Set(this.B.locks);
+        return this._names(this.A.locks.filter(s => sb.has(s)));
+      },
+      onlyA() {
+        if (this.A === null || this.B === null) return [];
+        const sb = new Set(this.B.locks);
+        return this._names(this.A.locks.filter(s => !sb.has(s)));
+      },
+      onlyB() {
+        if (this.A === null || this.B === null) return [];
+        const sa = new Set(this.A.locks);
+        return this._names(this.B.locks.filter(s => !sa.has(s)));
+      },
+    };
+  }
+</script>
+{% endblock %}

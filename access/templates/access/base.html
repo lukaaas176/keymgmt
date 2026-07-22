@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Schließmatrix{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: {
+      fontFamily: {
+        display: ['"Space Grotesk"','ui-sans-serif','system-ui','sans-serif'],
+        sans: ['Inter','ui-sans-serif','system-ui','sans-serif'],
+        mono: ['"JetBrains Mono"','ui-monospace','SFMono-Regular','monospace'],
+      },
+    }}}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style type="text/tailwindcss">
+    body { @apply font-sans antialiased text-slate-700 bg-slate-50; }
+    .card { @apply bg-white rounded-xl ring-1 ring-slate-200/80 shadow-sm; }
+    .chip { @apply inline-flex items-center font-mono text-[11px] leading-none px-1.5 py-1 rounded bg-slate-100 text-slate-600 ring-1 ring-slate-200; }
+    .btn-primary { @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition bg-indigo-600 text-white hover:bg-indigo-500 shadow-sm; }
+    .btn-ghost { @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100; }
+    .nav-link { @apply px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition; }
+    .nav-active { @apply bg-slate-900 text-white hover:bg-slate-900 hover:text-white; }
+    .stat-num { @apply text-3xl font-display font-semibold tracking-tight text-slate-900; }
+    .eyebrow { @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400; }
+    .h-title { @apply font-display font-semibold tracking-tight text-slate-900; }
+    /* Soll toggle cells (matrix + detail editors) */
+    .soll-cell { @apply h-7 w-7 grid place-items-center rounded-md ring-1 ring-inset ring-slate-200 bg-white text-white; }
+    .soll-cell > svg { @apply h-4 w-4 opacity-0 scale-75 transition; }
+    .soll-cell.on { @apply bg-indigo-600 ring-indigo-600; }
+    .soll-cell.on > svg { @apply opacity-100 scale-100; }
+    /* group-inherited: distinct violet, always ticked, never editable */
+    .soll-cell.inherited { @apply bg-violet-100 ring-violet-300 text-violet-600 cursor-not-allowed; }
+    .soll-cell.inherited > svg { @apply opacity-100 scale-100; }
+    .editing .soll-cell:not(.inherited) { @apply cursor-pointer hover:ring-indigo-400; }
+    .editing .soll-cell.inherited { @apply cursor-not-allowed; }
+    .soll-grid.editing, .soll-grid.painting { @apply select-none; }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  </style>
+</head>
+<body class="min-h-full flex flex-col">
+  <header class="sticky top-0 z-30 bg-white/80 backdrop-blur border-b border-slate-200">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8" x-data="{open:false}">
+      <div class="flex h-16 items-center justify-between">
+        <a href="{% url 'dashboard' %}" class="flex items-center gap-2.5 group">
+          <span class="grid place-items-center h-8 w-8 rounded-lg bg-slate-900 text-white">
+            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </span>
+          <span class="font-display text-lg font-semibold tracking-tight text-slate-900">Schließmatrix</span>
+        </a>
+        <nav class="hidden md:flex items-center gap-1">
+          <a href="{% url 'dashboard' %}" class="nav-link {% if nav == 'dashboard' %}nav-active{% endif %}">Übersicht</a>
+          <a href="{% url 'transponder_list' %}" class="nav-link {% if nav == 'transponders' %}nav-active{% endif %}">Transponder</a>
+          <a href="{% url 'lock_list' %}" class="nav-link {% if nav == 'locks' %}nav-active{% endif %}">Türen</a>
+          <a href="{% url 'overlap' %}" class="nav-link {% if nav == 'overlap' %}nav-active{% endif %}">Überschneidung</a>
+          <a href="{% url 'individual_access' %}" class="nav-link {% if nav == 'individual' %}nav-active{% endif %}">Individuell</a>
+          <a href="{% url 'soll_matrix' %}" class="nav-link {% if nav == 'soll' %}nav-active{% endif %}">Soll</a>
+          {% if user.is_authenticated %}
+          <form method="post" action="{% url 'logout' %}" class="ml-1 pl-1 border-l border-slate-200">{% csrf_token %}
+            <button class="nav-link text-slate-400 hover:text-rose-600" title="Angemeldet als {{ user.get_username }}">Abmelden</button>
+          </form>
+          {% endif %}
+        </nav>
+        <button class="md:hidden p-2 -mr-2 text-slate-600" @click="open=!open" aria-label="Menu">
+          <svg class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+      </div>
+      <nav class="md:hidden pb-3 grid gap-1" x-show="open" x-transition style="display:none">
+        <a href="{% url 'dashboard' %}" class="nav-link {% if nav == 'dashboard' %}nav-active{% endif %}">Übersicht</a>
+        <a href="{% url 'transponder_list' %}" class="nav-link {% if nav == 'transponders' %}nav-active{% endif %}">Transponder</a>
+        <a href="{% url 'lock_list' %}" class="nav-link {% if nav == 'locks' %}nav-active{% endif %}">Türen</a>
+        <a href="{% url 'overlap' %}" class="nav-link {% if nav == 'overlap' %}nav-active{% endif %}">Überschneidung</a>
+        <a href="{% url 'individual_access' %}" class="nav-link {% if nav == 'individual' %}nav-active{% endif %}">Individuell</a>
+        <a href="{% url 'soll_matrix' %}" class="nav-link {% if nav == 'soll' %}nav-active{% endif %}">Soll</a>
+        {% if user.is_authenticated %}
+        <form method="post" action="{% url 'logout' %}">{% csrf_token %}
+          <button class="nav-link text-slate-400 hover:text-rose-600">Abmelden ({{ user.get_username }})</button>
+        </form>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+
+  {% if messages %}
+  <div class="fixed top-20 right-4 z-50 w-[min(92vw,26rem)] space-y-2">
+    {% for m in messages %}
+    <div x-data="{show:true}" x-show="show" x-init="setTimeout(()=>show=false,6500)"
+         x-transition.opacity.duration.300ms
+         class="card px-4 py-3 flex items-start gap-3 text-sm
+           {% if m.tags == 'success' %}ring-emerald-200{% elif m.tags == 'error' %}ring-rose-200{% elif m.tags == 'warning' %}ring-amber-200{% else %}ring-slate-200{% endif %}">
+      <span class="mt-0.5 h-2 w-2 shrink-0 rounded-full
+        {% if m.tags == 'success' %}bg-emerald-500{% elif m.tags == 'error' %}bg-rose-500{% elif m.tags == 'warning' %}bg-amber-500{% else %}bg-indigo-500{% endif %}"></span>
+      <p class="text-slate-700 flex-1">{{ m }}</p>
+      <button @click="show=false" class="text-slate-400 hover:text-slate-700">&times;</button>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <main class="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="border-t border-slate-200 py-6 text-center text-xs text-slate-400">
+    Schließmatrix · Zugangsübersicht · Daten aus SimonsVoss-Ausdrucken
+  </footer>
+
+  <script>
+    // --- Soll editing: CSRF + a click/drag toggle grid ---------------------
+    function getCsrf() {
+      const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+      return m ? m[1] : '';
+    }
+    async function sollPost(url, body) {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrf()},
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error('save failed');
+      return r.json();
+    }
+    // Wire a container of `.soll-cell` buttons for click + drag-paint. Each
+    // cell carries data-ck (column kind: group|tp), data-ci (column id) and
+    // data-lock (serial); `.on` is its state. Editing is gated by the
+    // container having the `editing` class. On release, changed cells are
+    // grouped by column and POSTed to `url` as {ops:[{kind,id,on,locks}]}.
+    function initSollGrid(root, url) {
+      if (!root || root.dataset.sollWired) return;   // never wire twice
+      root.dataset.sollWired = '1';
+      let painting = false, paintOn = false;
+      const changed = new Map();
+      const isOn = c => c.classList.contains('on');
+      const editing = () => root.classList.contains('editing');
+      function paint(cell) {
+        if (cell.dataset.locked) return;      // group-inherited — not editable
+        if (isOn(cell) === paintOn) return;   // already in target state — skip
+        cell.classList.toggle('on', paintOn);
+        // Record only cells that actually flipped, so the batch (and the
+        // revert-on-error below) touch exactly those.
+        changed.set(cell.dataset.ck + '|' + cell.dataset.ci + '|' + cell.dataset.lock, cell);
+      }
+      async function commit() {
+        if (!painting) return;
+        painting = false;
+        root.classList.remove('painting');
+        if (!changed.size) return;
+        const byCol = {};
+        for (const c of changed.values()) {
+          const k = c.dataset.ck + '|' + c.dataset.ci;
+          (byCol[k] ||= {kind: c.dataset.ck, id: c.dataset.ci, on: paintOn, locks: []})
+            .locks.push(c.dataset.lock);
+        }
+        const cells = [...changed.values()];
+        changed.clear();
+        try { await sollPost(url, {ops: Object.values(byCol)}); }
+        catch (e) {
+          cells.forEach(c => c.classList.toggle('on', !paintOn));  // revert
+          alert('Speichern fehlgeschlagen — bitte erneut versuchen.');
+        }
+      }
+      root.addEventListener('pointerdown', e => {
+        const cell = e.target.closest('.soll-cell');
+        if (!cell || !editing() || cell.dataset.locked) return;
+        e.preventDefault();
+        painting = true; paintOn = !isOn(cell);
+        root.classList.add('painting');
+        paint(cell);
+      });
+      root.addEventListener('pointerover', e => {
+        if (!painting) return;
+        const cell = e.target.closest('.soll-cell');
+        if (cell) paint(cell);
+      });
+      window.addEventListener('pointerup', commit);
+      window.addEventListener('pointercancel', commit);
+    }
+
+    // Drag-and-drop helper for the upload dropzone (progressive enhancement).
+    function dropzone() {
+      return {
+        over: false,
+        names: [],
+        pick(e) { this.names = Array.from(e.target.files).map(f => f.name); },
+        drop(e) {
+          this.over = false;
+          this.$refs.input.files = e.dataTransfer.files;
+          this.names = Array.from(e.dataTransfer.files).map(f => f.name);
+        },
+      };
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,16 @@
+[project]
+name = "keymgmt"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "django>=6.0.6",
+    "pdfplumber>=0.11.10",
+]
+
+[project.optional-dependencies]
+# Production WSGI server (see nix/ and DEPLOY.md). Pillow ships transitively
+# with pdfplumber and is used by the image OCR / PDF-render paths.
+server = [
+    "gunicorn>=21.2",
+    "pillow>=10",
+]

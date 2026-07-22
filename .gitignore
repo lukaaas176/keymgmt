@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.uv/
+
+# Django / local data — the DB and its backups live on the server, not in git
+db.sqlite3
+db.sqlite3-*
+db.sqlite3.bak-*
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Local access-control data (real keying data — keep it off the repo)
+*.pdf
+*.csv
+/to_check/
+
+# Nix
+result
+result-*
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Scratch
+/scratchpad/
+
+# Large UI screenshot — may show real access data; keep it out of a pushed repo
+screenshot.png
+
+# Design-hook local cache
+.impeccable/

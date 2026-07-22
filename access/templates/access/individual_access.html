@@ -1,0 +1,66 @@
+{% extends "access/base.html" %}
+{% block title %}Individuelle Rechte · Schließmatrix{% endblock %}
+{% block content %}
+<div x-data="{q:''}">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <p class="eyebrow">Rechte-Prüfung</p>
+      <h1 class="h-title text-3xl mt-1">Individuelle Rechte</h1>
+      <p class="mt-2 text-slate-500 max-w-2xl">Türen, die ein Transponder direkt öffnet (aktiv oder geplant), aber <span class="font-medium">nicht</span> über eine seiner Gruppen erhält. Zugang, der vollständig aus Gruppen stammt, erscheint hier nicht; ein Transponder ohne Gruppe zählt seinen gesamten Zugang als individuell.</p>
+    </div>
+    <div class="relative w-full sm:w-72">
+      <svg class="absolute left-3 top-2.5 h-4 w-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m21 21-4.3-4.3"/></svg>
+      <input x-model="q" type="search" placeholder="Transponder suchen"
+             class="w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 outline-none">
+    </div>
+  </div>
+
+  {% if planned_pending %}
+  <div class="mt-4 flex flex-wrap items-center gap-3">
+    <div class="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-sm">
+      <a href="?scope=planned" class="px-3 py-1.5 rounded-md transition {% if scope == 'planned' %}bg-white shadow-sm text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-700{% endif %}">Geplanter Endzustand</a>
+      <a href="?scope=active" class="px-3 py-1.5 rounded-md transition {% if scope == 'active' %}bg-white shadow-sm text-slate-900 font-medium{% else %}text-slate-500 hover:text-slate-700{% endif %}">Aktiv</a>
+    </div>
+    <p class="text-xs text-slate-400">{% if scope == 'active' %}Nur die aktuell programmierten individuellen Rechte.{% else %}Individuelle Rechte im Endzustand (aktiv&nbsp;+&nbsp;geplant).{% endif %}</p>
+  </div>
+  {% endif %}
+
+  <div class="mt-5 flex flex-wrap gap-x-8 gap-y-2">
+    <div><span class="stat-num">{{ n_transponders }}</span> <span class="text-sm text-slate-500">Transponder mit individuellen Rechten</span></div>
+    <div><span class="stat-num">{{ n_grants }}</span> <span class="text-sm text-slate-500">individuelle Tür-Rechte</span></div>
+  </div>
+
+  <div class="mt-6 space-y-3">
+    {% for row in rows %}
+    <div data-search="{{ row.tp.label|lower }} {{ row.tp.serial|lower }} {{ row.tp.asta_number|default:'' }}"
+         x-show="!q || $el.dataset.search.includes(q.toLowerCase())"
+         class="card overflow-hidden">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3 bg-slate-50 border-b border-slate-100">
+        <a href="{% url 'transponder_detail' row.tp.serial %}" class="font-medium text-slate-900 hover:text-indigo-600">{{ row.tp.label }}</a>
+        <span class="chip">{{ row.tp.serial }}</span>
+        {% if row.tp.asta_number is not None %}<span class="text-xs text-slate-400">ASTA {{ row.tp.asta_number }}</span>{% endif %}
+        <span class="text-slate-300">·</span>
+        {% for g in row.groups %}
+        <a href="{% url 'group_detail' g.pk %}" class="text-[11px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 ring-1 ring-inset ring-indigo-100 hover:bg-indigo-100">{{ g.name }}</a>
+        {% empty %}
+        <span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-100">keine Gruppe</span>
+        {% endfor %}
+        <span class="ml-auto text-sm text-slate-500"><span class="font-display font-semibold text-slate-900">{{ row.n }}</span> individuell <span class="text-slate-300">/ {{ row.n_current }} gesamt</span></span>
+      </div>
+      <ul class="divide-y divide-slate-100">
+        {% for d in row.doors %}
+        <li class="flex items-center gap-3 px-4 py-1.5 text-sm">
+          <span class="h-1.5 w-1.5 shrink-0 rounded-full {% if d.state == 'active' %}bg-emerald-500{% else %}bg-amber-400{% endif %}"></span>
+          <a href="{% url 'lock_detail' d.lock.serial %}" class="text-slate-700 hover:text-indigo-600 min-w-0 truncate">{{ d.lock.label }}</a>
+          {% if d.lock.location %}<span class="text-xs text-slate-400">{{ d.lock.location }}</span>{% endif %}
+          <span class="ml-auto text-[10px] uppercase tracking-wide {% if d.state == 'active' %}text-emerald-600{% else %}text-amber-600{% endif %}">{% if d.state == 'active' %}aktiv{% else %}geplant{% endif %}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% empty %}
+    <div class="card p-10 text-center text-slate-500">Keine individuellen Rechte — jeder Transponder-Zugang stammt vollständig aus einer Gruppe.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

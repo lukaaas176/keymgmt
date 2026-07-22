@@ -1,0 +1,47 @@
+{% extends "access/base.html" %}
+{% block title %}Türen · Schließmatrix{% endblock %}
+{% block content %}
+<div x-data="{q:''}">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <p class="eyebrow">Türen</p>
+      <h1 class="h-title text-3xl mt-1">Türen</h1>
+    </div>
+    <div class="relative w-full sm:w-72">
+      <svg class="absolute left-3 top-2.5 h-4 w-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m21 21-4.3-4.3"/></svg>
+      <input x-model="q" type="search" placeholder="Tür, Seriennr. oder Standort suchen"
+             class="w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 outline-none">
+    </div>
+  </div>
+
+  <div class="mt-5 card overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-slate-500">
+        <tr class="text-left">
+          <th class="px-4 py-3 font-medium">Tür</th>
+          <th class="px-4 py-3 font-medium">Seriennr.</th>
+          <th class="px-4 py-3 font-medium hidden md:table-cell">Standort</th>
+          <th class="px-4 py-3 font-medium hidden lg:table-cell">Bereich</th>
+          <th class="px-4 py-3 font-medium text-right">Transponder</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for l in locks %}
+        <tr data-search="{{ l.door_name|lower }} {{ l.room_number|lower }} {{ l.serial|lower }} {{ l.location|lower }} {{ l.area|lower }}"
+            x-show="!q || $el.dataset.search.includes(q.toLowerCase())"
+            class="hover:bg-slate-50 transition">
+          <td class="px-4 py-3">
+            <a href="{% url 'lock_detail' l.serial %}" class="font-medium text-slate-900 hover:text-indigo-600">{{ l.door_name|default:l.serial }}</a>
+            {% if l.room_number %}<span class="text-slate-400"> · {{ l.room_number }}</span>{% endif %}
+          </td>
+          <td class="px-4 py-3"><span class="chip">{{ l.serial }}</span></td>
+          <td class="px-4 py-3 hidden md:table-cell text-slate-500">{{ l.location|default:"—" }}</td>
+          <td class="px-4 py-3 hidden lg:table-cell text-slate-500">{{ l.area|default:"—" }}</td>
+          <td class="px-4 py-3 text-right font-display font-semibold text-slate-900">{{ l.n }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
