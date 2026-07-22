@@ -149,10 +149,31 @@ the Django gate on.
 
 ## Backups
 
-Everything is in one SQLite file. Back it up online (safe under WAL):
+Everything is in one SQLite file. The module runs an **automated online backup**
+(WAL-safe `.backup`, then prune) on a systemd timer — enabled by default:
+
+```nix
+services.keymgmt.backup = {
+  enable = true;                 # default
+  interval = "daily";            # any systemd OnCalendar, e.g. "*-*-* 03:00:00"
+  keep = 14;                     # retain the newest 14 backups
+  # directory = "/var/lib/keymgmt/backups";   # default; override if you like
+};
+```
+
+Inspect or run it on demand:
 
 ```bash
-sqlite3 /var/lib/keymgmt/db.sqlite3 ".backup '/var/backups/keymgmt-$(date +%F).sqlite3'"
+systemctl list-timers keymgmt-backup
+systemctl start keymgmt-backup      # one-off backup now
+ls -lh /var/lib/keymgmt/backups
+```
+
+Point your off-host backup (restic/borg/…) at that directory. A manual one-off,
+if ever needed:
+
+```bash
+sqlite3 /var/lib/keymgmt/db.sqlite3 ".backup '/tmp/keymgmt-$(date +%F).sqlite3'"
 ```
 
 ---

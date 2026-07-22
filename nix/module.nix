@@ -29,6 +29,23 @@ let
     ${pythonEnv}/bin/python ${cfg.package}/manage.py migrate --noinput
     ${pythonEnv}/bin/python ${cfg.package}/manage.py ensure_user
   '';
+
+  backupDir =
+    if cfg.backup.directory != null then cfg.backup.directory
+    else "/var/lib/${cfg.stateDir}/backups";
+
+  # Online (WAL-safe) SQLite backup, then prune to the newest N.
+  backupScript = pkgs.writeShellScript "keymgmt-backup" ''
+    set -eu
+    db="/var/lib/${cfg.stateDir}/db.sqlite3"
+    dir="${backupDir}"
+    dest="$dir/keymgmt-$(date +%Y-%m-%d_%H%M%S).sqlite3"
+    sqlite3 "$db" ".backup '$dest'"
+    echo "wrote $dest"
+    ls -1t "$dir"/keymgmt-*.sqlite3 2>/dev/null \
+      | tail -n +${toString (cfg.backup.keep + 1)} \
+      | while read -r old; do rm -f "$old"; echo "pruned $old"; done
+  '';
 in
 {
   options.services.keymgmt = {
@@ -145,6 +162,31 @@ in
       default = null;
       description = "Optional extra systemd EnvironmentFile for further KEYMGMT_* overrides.";
     };
+
+    backup = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Periodically back up the SQLite database via a systemd timer.";
+      };
+      interval = lib.mkOption {
+        type = lib.types.str;
+        default = "daily";
+        example = "*-*-* 03:00:00";
+        description = "systemd OnCalendar expression for the backup timer.";
+      };
+      keep = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 14;
+        description = "Number of most-recent backups to retain (older ones are pruned).";
+      };
+      directory = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        defaultText = lib.literalExpression "\"/var/lib/\${stateDir}/backups\"";
+        description = "Where backups are written (defaults to a subdirectory of the state dir).";
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -200,6 +242,44 @@ in
         UMask = "0077";
       } // lib.optionalAttrs (cfg.environmentFile != null) {
         EnvironmentFile = cfg.environmentFile;
+      };
+    };
+
+    # --- Automated SQLite backups (systemd timer) ---------------------------
+    systemd.tmpfiles.rules = lib.mkIf cfg.backup.enable [
+      "d ${backupDir} 0750 ${cfg.user} ${cfg.group} - -"
+    ];
+
+    systemd.services.keymgmt-backup = lib.mkIf cfg.backup.enable {
+      description = "keymgmt SQLite backup";
+      path = [ pkgs.sqlite pkgs.coreutils ];
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.user;
+        Group = cfg.group;
+        ExecStart = "${backupScript}";
+
+        # Hardening: read the DB, write only the backup tree.
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ReadWritePaths = lib.unique [ "/var/lib/${cfg.stateDir}" backupDir ];
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        LockPersonality = true;
+        SystemCallFilter = [ "@system-service" ];
+        SystemCallErrorNumber = "EPERM";
+        UMask = "0077";
+      };
+    };
+
+    systemd.timers.keymgmt-backup = lib.mkIf cfg.backup.enable {
+      description = "keymgmt SQLite backup timer";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = cfg.backup.interval;
+        Persistent = true;
+        RandomizedDelaySec = "5m";
       };
     };
   };

@@ -29,22 +29,32 @@ Two printout formats are understood and auto-detected on upload:
 Everything is stored in a SQLite file (`db.sqlite3`) that persists across
 restarts.
 
-## Quickstart
+## Quickstart (local development)
+
+This project uses [`uv`](https://docs.astral.sh/uv/) and, optionally,
+[`just`](https://just.systems) as a task runner. Production defaults are
+**secure** (DEBUG off, login required, a real `SECRET_KEY` demanded), so local
+work runs with `KEYMGMT_DEBUG=1` — `just` sets that for you.
 
 ```bash
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py runserver
+just migrate          # or: KEYMGMT_DEBUG=1 uv run python manage.py migrate
+just createuser       # create a login account
+just dev              # → http://127.0.0.1:8000
 ```
 
-Open http://127.0.0.1:8000 and drop your PDF printouts onto the upload area.
+Run `just` to see all recipes (`test`, `check`, `import`, `export-changes`,
+`backup`, …). Without `just`, prefix any manage.py command with
+`KEYMGMT_DEBUG=1 uv run python`.
 
-To bulk-import a folder instead of using the browser:
+Open http://127.0.0.1:8000, sign in, and drop your PDF printouts onto the upload
+area. To bulk-import a folder instead of the browser:
 
 ```bash
-python manage.py loadpdfs /path/to/pdfs
+just import /path/to/pdfs      # or: uv run python manage.py loadpdfs /path/to/pdfs
 ```
+
+To deploy on your own server (NixOS module, gunicorn, nginx, secrets, backups),
+see **[DEPLOY.md](DEPLOY.md)**.
 
 Re-importing a transponder refreshes its data and access set, so uploading an
 updated printout is safe and idempotent.
@@ -80,14 +90,21 @@ per-transponder list printouts, so they are imported conservatively:
     keycards; tap a cell to see exactly which doors two keys share);
   - **Identical access** — keycards that open precisely the same set of doors;
   - **Access tiers** — doors grouped by the exact set of keys that open them.
+- **Individuell** — every transponder's *individual* access: doors it holds that
+  aren't provided by any group it belongs to (toggle current vs. planned state).
+- **Soll** — the target ("Soll") editor: a Groups × Doors matrix and reusable
+  door-groups; a per-transponder Soll editor distinguishes group-inherited
+  (locked) from individual doors. Exports the reprogramming worklist and the
+  Soll/Ist diff as Typst-rendered PDFs. Hollow-cross (`wird entfernt`) marks
+  from a matrix show up as pending removals throughout.
 
-## Admin (optional)
+## Authentication
 
-```bash
-python manage.py createsuperuser
-```
-
-Then visit `/admin/` to edit locks and transponders directly.
+The whole UI is gated behind a login (`LoginRequiredMiddleware`); there is no
+Django admin exposed. Create an account with `just createuser` (or
+`uv run python manage.py createsuperuser`) and sign in at `/accounts/login/`.
+In production the NixOS module provisions the initial user for you — see
+[DEPLOY.md](DEPLOY.md).
 
 ## Data model
 
@@ -103,8 +120,11 @@ Then visit `/admin/` to edit locks and transponders directly.
   deployment, build a static stylesheet with the Tailwind CLI
   (`npx tailwindcss -i in.css -o static/app.css --minify`) and replace the two
   CDN `<script>`/`<link>` tags in `access/templates/access/base.html`.
-- `DEBUG=True` and `ALLOWED_HOSTS=["*"]` are set for easy local use. Set a real
-  `SECRET_KEY`, turn off debug, and restrict hosts before exposing it.
+- The UI is in **German**. Settings are environment-driven with secure
+  production defaults (DEBUG off, login required, hosts restricted, secret key
+  demanded); local dev opts back in with `KEYMGMT_DEBUG=1`. See
+  [DEPLOY.md](DEPLOY.md) for the full configuration and a hardened NixOS +
+  nginx deployment.
 - The parser and its standalone test suite
   (`parse_transponder_pdfs.py`, `test_parse_transponder_pdfs.py`) were delivered
   separately; `access/pdf_parser.py` is the same module.
