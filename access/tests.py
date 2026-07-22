@@ -2037,3 +2037,17 @@ class LockTransponderCrudTests(TestCase):
         Lock.objects.create(serial="DC-1")
         self.assertEqual(self.client.get("/locks/DC-1/delete/").status_code, 405)
         self.assertTrue(Lock.objects.filter(serial="DC-1").exists())
+
+    def test_reserved_or_invalid_serial_rejected(self):
+        # "new" collides with the create route; "/" breaks the detail URL.
+        for bad in ("new", "DC/1"):
+            r = self.client.post("/locks/new/", {
+                "serial": bad, "door_name": "X", "room_number": "",
+                "location": "", "area": ""})
+            self.assertEqual(r.status_code, 200)   # re-rendered with an error
+            self.assertFalse(Lock.objects.filter(serial=bad).exists())
+        # a normal serial still creates fine
+        r = self.client.post("/transponders/new/", {
+            "serial": "new", "asta_number": "", "person_name": "",
+            "locking_system": "", "printed_on": ""})
+        self.assertFalse(Transponder.objects.filter(serial="new").exists())

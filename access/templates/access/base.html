@@ -126,13 +126,16 @@
       return r.json();
     }
     // Keep a Soll editor in edit mode across the reload a group edit triggers:
-    // set a one-shot flag, reload, and let the editor's init() consume it.
+    // set a one-shot flag scoped to THIS path, reload, and let the editor's
+    // init() consume it. Path-scoping means a flag left stuck by an interrupted
+    // reload (e.g. a session-expiry redirect) can never re-open edit mode on a
+    // different page.
     function reloadKeepEditing() {
-      sessionStorage.setItem('soll-reedit', '1');
+      sessionStorage.setItem('soll-reedit', location.pathname);
       location.reload();
     }
     function consumeReenterEditing() {
-      if (sessionStorage.getItem('soll-reedit')) {
+      if (sessionStorage.getItem('soll-reedit') === location.pathname) {
         sessionStorage.removeItem('soll-reedit');
         return true;
       }

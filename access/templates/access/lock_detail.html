@@ -115,12 +115,15 @@
   function doorSoll() {
     return {
       editing: false,
-      init() { initSollGrid(this.$refs.ggrid, '{% url 'soll_toggle' %}'); },
+      init() {
+        if (consumeReenterEditing()) this.editing = true;
+        initSollGrid(this.$refs.ggrid, '{% url 'soll_toggle' %}');
+      },
       async add(serial) {
         if (!serial) return;
         await sollPost('{% url 'soll_toggle' %}',
           {ops: [{kind: 'tp', id: serial, on: true, locks: ['{{ lock.serial|escapejs }}']}]});
-        location.reload();
+        reloadKeepEditing();
       },
       async remove(serial, e) {
         await sollPost('{% url 'soll_toggle' %}',
