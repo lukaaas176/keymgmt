@@ -20,10 +20,26 @@ jobs:
       - name: Install uv (provisions the required Python)
         uses: astral-sh/setup-uv@v6
 
+      - name: Install Typst (for the PDF-export tests)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/typst/typst/releases/latest \
+            | grep -oP '"tag_name":\s*"\K[^"]+')
+          echo "Installing Typst $tag"
+          curl -fsSL "https://github.com/typst/typst/releases/download/${tag}/typst-x86_64-unknown-linux-musl.tar.xz" -o typst.tar.xz
+          tar -xf typst.tar.xz
+          echo "$PWD/typst-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+
+      - name: Show tool versions
+        run: typst --version
+
       - name: Run the test suite
         # DEBUG/secret guard and the login gate relax automatically under the
-        # test runner. Typst (PDF export) and scanned-fixture tests skip when
-        # those binaries/fixtures are absent in CI.
+        # test runner. With Typst installed the PDF-export tests run too; only
+        # the scanned-fixture tests skip (those fixtures are gitignored).
         run: uv run python manage.py test access -v1
 
   flake-check:
