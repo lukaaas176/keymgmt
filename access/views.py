@@ -392,49 +392,56 @@ def overlap(request):
 # --- individual (non-group) access -----------------------------------------
 
 def individual_access(request):
-    """Look up every transponder's *individual* access.
+    """Look up every transponder's *individual* access — doors it holds that are
+    **not** provided by any group it belongs to.
 
-    Individual = doors the transponder holds now (active ∪ planned) that are
-    **not** provided by any group it belongs to. Group-inherited doors are
-    excluded — they come with the group, not the transponder. A transponder in
-    no group therefore has all its access counted as individual; one whose
-    access is fully covered by its groups is omitted entirely.
+    Two bases via ``?scope``: ``active`` (currently programmed) or ``soll`` (the
+    target Soll / ``desired`` state — the default). Group-inherited doors are
+    excluded either way. In the Soll view each door is tagged by its programming
+    reality: ``active`` (already there), ``planned`` (pending), or ``add`` (in
+    the Soll but not yet programmed).
     """
-    scope = request.GET.get("scope")
-    if scope not in ("active", "planned"):
-        scope = "planned"          # default: planned end state (active ∪ planned)
+    scope = "active" if request.GET.get("scope") == "active" else "soll"
     tps = (Transponder.objects
-           .prefetch_related("locks", "planned_locks", "groups__doors")
+           .prefetch_related("locks", "planned_locks", "desired_locks",
+                             "groups__doors")
            .order_by("asta_number", "person_name", "serial"))
     rows = []
     n_grants = 0
-    planned_pending = False
     for tp in tps:
-        active = {lk.serial for lk in tp.locks.all()}
-        planned = {lk.serial for lk in tp.planned_locks.all()}
-        if planned:
-            planned_pending = True
-        current = active if scope == "active" else (active | planned)
+        active_locks = list(tp.locks.all())
+        planned_locks = list(tp.planned_locks.all())
+        desired_locks = list(tp.desired_locks.all())
+        active = {lk.serial for lk in active_locks}
+        planned = {lk.serial for lk in planned_locks}
+        desired = {lk.serial for lk in desired_locks}
         group_doors = set()
         for g in tp.groups.all():
             group_doors |= {lk.serial for lk in g.doors.all()}
-        individual = current - group_doors
+        basis = active if scope == "active" else desired
+        individual = basis - group_doors
         if not individual:
             continue
-        doors, seen = [], set()
-        for lk in list(tp.locks.all()) + list(tp.planned_locks.all()):
-            if lk.serial not in individual or lk.serial in seen:
+        by_serial = {lk.serial: lk for lk in
+                     active_locks + planned_locks + desired_locks}
+        doors = []
+        for serial in individual:
+            lk = by_serial.get(serial)
+            if lk is None:
                 continue
-            seen.add(lk.serial)
-            doors.append({"lock": lk,
-                          "state": "active" if lk.serial in active else "planned"})
+            if scope == "active":
+                state = "active"
+            else:
+                state = ("active" if serial in active else
+                         "planned" if serial in planned else "add")
+            doors.append({"lock": lk, "state": state})
         doors.sort(key=lambda d: (d["lock"].location or "", d["lock"].label))
         n_grants += len(doors)
         rows.append({"tp": tp, "groups": list(tp.groups.all()),
-                     "doors": doors, "n": len(doors), "n_current": len(current)})
+                     "doors": doors, "n": len(doors), "n_current": len(basis)})
     return render(request, "access/individual_access.html", {
         "rows": rows, "n_transponders": len(rows), "n_grants": n_grants,
-        "scope": scope, "planned_pending": planned_pending, "nav": "individual",
+        "scope": scope, "nav": "individual",
     })
 
 

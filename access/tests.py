@@ -1758,44 +1758,49 @@ class InheritedAndIndividualTests(TestCase):
                     for c in row["cells"] if c["kind"] == "tp")
         self.assertTrue(cell["inherited"])
 
-    def test_individual_lists_only_non_group_current_access(self):
+    def test_individual_soll_scope_lists_individual_desired(self):
+        # Default scope is the Soll: individual desired doors (not from a group).
         from access import soll
-        soll.assign_group(self.tp, self.g1)                 # D1 D2 D3 via group
-        self.tp.locks.set([self.L[0], self.L[3]])           # active: D1(group), D4
-        self.tp.planned_locks.set([self.L[4]])              # planned: D5
+        soll.assign_group(self.tp, self.g1)          # D1 D2 D3 desired via group
+        self.tp.desired_locks.add(self.L[3])         # D4 individual Soll
+        self.tp.locks.set([self.L[3]])               # D4 already active
         ctx = self.client.get("/individual/").context
+        self.assertEqual(ctx["scope"], "soll")
         self.assertEqual(len(ctx["rows"]), 1)
-        row = ctx["rows"][0]
-        states = {d["lock"].serial: d["state"] for d in row["doors"]}
-        self.assertEqual(states, {"D4": "active", "D5": "planned"})  # D1 excluded
-        self.assertEqual(ctx["n_grants"], 2)
+        states = {d["lock"].serial: d["state"] for d in ctx["rows"][0]["doors"]}
+        self.assertEqual(states, {"D4": "active"})   # D1-D3 excluded (group)
+        self.assertEqual(ctx["n_grants"], 1)
 
-    def test_individual_omits_fully_covered_and_keeps_groupless(self):
+    def test_individual_soll_add_state(self):
+        # A Soll door not yet programmed is tagged 'add'; ?scope=planned falls
+        # through to the Soll view.
         from access import soll
-        # AAA fully covered by its group -> omitted.
         soll.assign_group(self.tp, self.g1)
-        self.tp.locks.set([self.L[0], self.L[1]])
-        # BBB has no group -> all its access is individual.
-        b = Transponder.objects.create(serial="BBB")
-        b.locks.set([self.L[0], self.L[1]])
-        ctx = self.client.get("/individual/").context
-        serials = [r["tp"].serial for r in ctx["rows"]]
-        self.assertEqual(serials, ["BBB"])
-        self.assertEqual(ctx["rows"][0]["n"], 2)
+        self.tp.desired_locks.add(self.L[3])         # D4 wished, not programmed
+        ctx = self.client.get("/individual/?scope=planned").context
+        self.assertEqual(ctx["scope"], "soll")
+        states = {d["lock"].serial: d["state"] for d in ctx["rows"][0]["doors"]}
+        self.assertEqual(states, {"D4": "add"})
 
-    def test_individual_scope_active_excludes_planned(self):
+    def test_individual_active_scope_uses_programming(self):
         from access import soll
-        soll.assign_group(self.tp, self.g1)                 # D1 D2 D3 via group
-        self.tp.locks.set([self.L[0], self.L[3]])           # active: D1(group), D4
-        self.tp.planned_locks.set([self.L[4]])              # planned: D5
-        ctx = self.client.get("/individual/").context       # default = planned
-        self.assertEqual(ctx["scope"], "planned")
-        self.assertEqual({d["lock"].serial for d in ctx["rows"][0]["doors"]},
-                         {"D4", "D5"})
-        ctx2 = self.client.get("/individual/?scope=active").context
-        self.assertEqual(ctx2["scope"], "active")
-        self.assertEqual({d["lock"].serial for d in ctx2["rows"][0]["doors"]},
-                         {"D4"})
+        soll.assign_group(self.tp, self.g1)          # D1 D2 D3
+        self.tp.locks.set([self.L[0], self.L[3]])    # active: D1(group), D4
+        ctx = self.client.get("/individual/?scope=active").context
+        self.assertEqual(ctx["scope"], "active")
+        states = {d["lock"].serial: d["state"] for d in ctx["rows"][0]["doors"]}
+        self.assertEqual(states, {"D4": "active"})   # D1 excluded (group)
+
+    def test_individual_omits_covered_and_keeps_groupless(self):
+        from access import soll
+        # AAA's Soll is fully its group -> no individual Soll -> omitted.
+        soll.assign_group(self.tp, self.g1)
+        # BBB has no group but an individual Soll door.
+        b = Transponder.objects.create(serial="BBB")
+        b.desired_locks.add(self.L[0])
+        ctx = self.client.get("/individual/").context
+        self.assertEqual([r["tp"].serial for r in ctx["rows"]], ["BBB"])
+        self.assertEqual(ctx["rows"][0]["n"], 1)
 
     def test_lock_detail_individual_desirers_and_status(self):
         from access import soll

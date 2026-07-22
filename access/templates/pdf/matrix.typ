@@ -75,7 +75,7 @@
   #set text(6.5pt)
   #box(fill: ok-bg, inset: (x: 3pt, y: 1pt))[grün = programmiert wie gewünscht]
   #h(5pt)
-  #box(fill: bad-bg, inset: (x: 3pt, y: 1pt))[rot = muss geändert werden]
+  #box(fill: bad-bg, inset: (x: 3pt, y: 1pt))[rot = muss entfernt werden]
   #h(8pt)
   #box(cross(1.4pt, black)) aktiv
   #h(4pt) #box(cross(0.5pt, luma(140))) geplant
@@ -108,7 +108,9 @@
     cells.push(box(height: headerh, width: cell, inset: (bottom: 3pt),
       align(bottom + center,
         rotate(-90deg, reflow: true,
-          box(width: headerh - 8pt, text(6.5pt)[#trunc(c.label, 34)])))))
+          box(width: headerh - 8pt, text(6.5pt)[
+            #trunc(c.label, 28)#if c.label != c.serial [ #text(size: 5.5pt, fill: luma(140))[· #c.serial]]
+          ])))))
   }
   for (i, d) in dblk.enumerate() {
     let loc = if d.location != "" [ #text(fill: luma(160))[· #trunc(d.location, 16)]] else []
@@ -123,7 +125,10 @@
         } else {
           let weight = v.at(0)
           let wished = v.at(1)
-          let bg = if weight > 0 and wished == 1 { ok-bg } else { bad-bg }
+          // green = programmed as wished; red = programmed but unwished (must
+          // remove); "Soll fehlt" (wished, not configured) keeps only its red
+          // glyph, no red background.
+          let bg = if wished == 1 and weight > 0 { ok-bg } else if weight > 0 { bad-bg } else { white }
           let glyph = if weight == 2 { cross(1.4pt, black) } else if weight == 1 { cross(0.5pt, luma(120)) } else { cross(0.9pt, add-col) }
           cells.push(grid.cell(fill: bg, align(center + horizon, glyph)))
         }
