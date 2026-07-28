@@ -3,9 +3,13 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-  outputs = { self, nixpkgs }:
+  outputs =
+    { self, nixpkgs }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" ];
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
       forAll = nixpkgs.lib.genAttrs systems;
       pkgsFor = system: nixpkgs.legacyPackages.${system};
     in
@@ -20,27 +24,33 @@
       # `services.keymgmt.package` defaults to this flake's package.
       nixosModules.default = { pkgs, lib, ... }: {
         imports = [ ./nix/module.nix ];
-        services.keymgmt.package = lib.mkDefault
-          self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        services.keymgmt.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        services.keymgmt.python = lib.mkDefault (pkgsFor pkgs.stdenv.hostPlatform.system).python314;
       };
 
       # Dev shell: `nix develop` gives Python + typst + tesseract + uv.
-      devShells = forAll (system:
-        let pkgs = pkgsFor system;
-        in {
+      devShells = forAll (
+        system:
+        let
+          pkgs = pkgsFor system;
+        in
+        {
           default = pkgs.mkShell {
             packages = [
-              (pkgs.python3.withPackages (ps: with ps; [
-                django
-                pdfplumber
-                pillow
-                gunicorn
-              ]))
+              (pkgs.python314.withPackages (
+                ps: with ps; [
+                  django_6
+                  pdfplumber
+                  pillow
+                  gunicorn
+                ]
+              ))
               pkgs.typst
               pkgs.tesseract
               pkgs.uv
             ];
           };
-        });
+        }
+      );
     };
 }

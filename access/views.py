@@ -782,7 +782,7 @@ def _json_body(request):
     """Parsed JSON request body, or None if it is not valid JSON."""
     try:
         return json.loads(request.body or b"{}")
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         return None
 
 
@@ -895,7 +895,7 @@ def soll_toggle(request):
                     t = Transponder.objects.filter(pk=cid).first()
                     if t:
                         soll.set_desired(t, locks, on)
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 continue  # unparseable id -> skip this op
     return JsonResponse({"ok": True})
 

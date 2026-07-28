@@ -1,17 +1,18 @@
 { lib, stdenvNoCC }:
 
 # The application *source* as a store path (manage.py at $out/manage.py). The
-# Python environment and runtime tools (typst, tesseract) are assembled in the
-# NixOS module, so the same source works with whatever nixpkgs/Python the host
-# provides. Data, backups and the local DB are filtered out.
+# Python 3.14 environment and runtime tools (typst, tesseract) are assembled in
+# the NixOS module. Data, backups and the local DB are filtered out.
 stdenvNoCC.mkDerivation {
   pname = "keymgmt";
   version = "0.1.0";
 
   src = lib.cleanSourceWith {
     src = ../.;
-    filter = path: type:
-      let base = baseNameOf (toString path);
+    filter =
+      path: type:
+      let
+        base = baseNameOf (toString path);
       in
       base != ".git"
       && base != ".venv"

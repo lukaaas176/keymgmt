@@ -23,6 +23,9 @@ unresolved-attribute = "ignore"
 
 [tool.ruff]
 extend-exclude = ["access/migrations", "docs/superpowers"]
+# Keep deployable source parseable during upgrades from the previous Python
+# 3.13 Nix runtime, even though the configured runtime is Python 3.14.
+target-version = "py313"
 
 [tool.ruff.lint.per-file-ignores]
 # Django expects mutable declarative metadata on these class bodies.

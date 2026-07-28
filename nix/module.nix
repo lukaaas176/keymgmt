@@ -1,10 +1,23 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   cfg = config.services.keymgmt;
 
-  pythonEnv = cfg.python.withPackages (ps:
-    (with ps; [ django pdfplumber pillow gunicorn ]) ++ (cfg.extraPythonPackages ps));
+  pythonEnv = cfg.python.withPackages (
+    ps:
+    (with ps; [
+      django_6
+      pdfplumber
+      pillow
+      gunicorn
+    ])
+    ++ (cfg.extraPythonPackages ps)
+  );
 
   baseEnv = {
     DJANGO_SETTINGS_MODULE = "keymgmt.settings";
@@ -14,13 +27,14 @@ let
     KEYMGMT_REQUIRE_LOGIN = if cfg.requireLogin then "1" else "0";
     KEYMGMT_DB_PATH = "/var/lib/${cfg.stateDir}/db.sqlite3";
     KEYMGMT_SECRET_KEY_FILE = "${cfg.secretKeyFile}";
-    KEYMGMT_ALLOWED_HOSTS = lib.concatStringsSep ","
-      (cfg.allowedHosts ++ lib.optional (cfg.domain != null) cfg.domain);
-    KEYMGMT_CSRF_TRUSTED_ORIGINS =
-      lib.optionalString (cfg.domain != null) "https://${cfg.domain}";
+    KEYMGMT_ALLOWED_HOSTS = lib.concatStringsSep "," (
+      cfg.allowedHosts ++ lib.optional (cfg.domain != null) cfg.domain
+    );
+    KEYMGMT_CSRF_TRUSTED_ORIGINS = lib.optionalString (cfg.domain != null) "https://${cfg.domain}";
     KEYMGMT_HSTS_SECONDS = toString cfg.hstsSeconds;
     KEYMGMT_ADMIN_USERNAME = cfg.adminUsername;
-  } // lib.optionalAttrs (cfg.adminPasswordFile != null) {
+  }
+  // lib.optionalAttrs (cfg.adminPasswordFile != null) {
     KEYMGMT_ADMIN_PASSWORD_FILE = "${cfg.adminPasswordFile}";
   };
 
@@ -31,8 +45,7 @@ let
   '';
 
   backupDir =
-    if cfg.backup.directory != null then cfg.backup.directory
-    else "/var/lib/${cfg.stateDir}/backups";
+    if cfg.backup.directory != null then cfg.backup.directory else "/var/lib/${cfg.stateDir}/backups";
 
   # Online (WAL-safe) SQLite backup, then prune to the newest N.
   backupScript = pkgs.writeShellScript "keymgmt-backup" ''
@@ -58,9 +71,9 @@ in
 
     python = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.python3;
-      defaultText = lib.literalExpression "pkgs.python3";
-      description = "Python package set to build the app environment from (needs Django ≥ 6.0).";
+      default = pkgs.python314;
+      defaultText = lib.literalExpression "pkgs.python314";
+      description = "Python 3.14 package set used to build the Django 6 app environment.";
     };
 
     extraPythonPackages = lib.mkOption {
@@ -72,7 +85,10 @@ in
 
     runtimePackages = lib.mkOption {
       type = lib.types.listOf lib.types.package;
-      default = [ pkgs.typst pkgs.tesseract ];
+      default = [
+        pkgs.typst
+        pkgs.tesseract
+      ];
       defaultText = lib.literalExpression "[ pkgs.typst pkgs.tesseract ]";
       description = "Runtime binaries on PATH. typst is required for PDF export; tesseract only for importing images of a matrix.";
     };
@@ -107,7 +123,11 @@ in
 
     allowedHosts = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ "localhost" "127.0.0.1" "[::1]" ];
+      default = [
+        "localhost"
+        "127.0.0.1"
+        "[::1]"
+      ];
       description = "Host headers to accept (the domain, if set, is added automatically).";
     };
 
@@ -148,8 +168,14 @@ in
       description = "systemd StateDirectory name; the SQLite DB lives in /var/lib/<stateDir>.";
     };
 
-    user = lib.mkOption { type = lib.types.str; default = "keymgmt"; };
-    group = lib.mkOption { type = lib.types.str; default = "keymgmt"; };
+    user = lib.mkOption {
+      type = lib.types.str;
+      default = "keymgmt";
+    };
+    group = lib.mkOption {
+      type = lib.types.str;
+      default = "keymgmt";
+    };
 
     hstsSeconds = lib.mkOption {
       type = lib.types.ints.unsigned;
@@ -190,6 +216,13 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = lib.versionAtLeast cfg.python.version "3.14";
+        message = "services.keymgmt.python must be Python 3.14 or newer";
+      }
+    ];
+
     users.users = lib.mkIf (cfg.user == "keymgmt") {
       keymgmt = {
         isSystemUser = true;
@@ -234,13 +267,18 @@ in
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+          "AF_UNIX"
+        ];
         RestrictNamespaces = true;
         LockPersonality = true;
         SystemCallFilter = [ "@system-service" ];
         SystemCallErrorNumber = "EPERM";
         UMask = "0077";
-      } // lib.optionalAttrs (cfg.environmentFile != null) {
+      }
+      // lib.optionalAttrs (cfg.environmentFile != null) {
         EnvironmentFile = cfg.environmentFile;
       };
     };
@@ -252,7 +290,10 @@ in
 
     systemd.services.keymgmt-backup = lib.mkIf cfg.backup.enable {
       description = "keymgmt SQLite backup";
-      path = [ pkgs.sqlite pkgs.coreutils ];
+      path = [
+        pkgs.sqlite
+        pkgs.coreutils
+      ];
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
@@ -264,7 +305,10 @@ in
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = true;
-        ReadWritePaths = lib.unique [ "/var/lib/${cfg.stateDir}" backupDir ];
+        ReadWritePaths = lib.unique [
+          "/var/lib/${cfg.stateDir}"
+          backupDir
+        ];
         RestrictAddressFamilies = [ "AF_UNIX" ];
         LockPersonality = true;
         SystemCallFilter = [ "@system-service" ];
