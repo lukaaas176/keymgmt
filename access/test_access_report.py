@@ -60,7 +60,10 @@ class AccessReportDataTests(TestCase):
             [("A", "AStA A"), ("A+L", "AStA L"), ("", "Ohne Gruppe")],
         )
         combined = report["sections"][1]
-        self.assertEqual(combined["serials"], ["010A0SC"])
+        self.assertEqual(
+            combined["transponders"],
+            [{"serial": "010A0SC", "title": "010A0SC · Kombiniert"}],
+        )
         self.assertEqual(
             [
                 lock["serial"]
@@ -77,7 +80,10 @@ class AccessReportDataTests(TestCase):
                 for lock in location["locks"]
             },
         )
-        self.assertEqual(report["sections"][-1]["serials"], ["0UNGR"])
+        self.assertEqual(
+            report["sections"][-1]["transponders"],
+            [{"serial": "0UNGR", "title": "0UNGR · Ohne Gruppe"}],
+        )
         self.assertEqual(report["sections"][-1]["locations"], [])
 
     def test_same_display_label_keeps_exact_memberships_separate(self):
@@ -116,8 +122,10 @@ class AccessReportDataTests(TestCase):
             serial="LOWER", door_name="allgemeiner eingang", location="MUC.A.EG"
         )
         self.base.doors.add(area_lock, unknown_lock, same_location)
-        second = Transponder.objects.create(serial="000base-lower")
+        second = Transponder.objects.create(serial="000base-lower", asta_number=42)
         second.groups.add(self.base)
+        unnamed = Transponder.objects.create(serial="000BASE-UNNAMED")
+        unnamed.groups.add(self.base)
 
         section = pdf_export.build_access_report_data()["sections"][0]
 
@@ -133,7 +141,17 @@ class AccessReportDataTests(TestCase):
             [lock["serial"] for lock in section["locations"][1]["locks"]],
             ["DOOR-A", "LOWER"],
         )
-        self.assertEqual(section["serials"], ["000BASE", "000base-lower"])
+        self.assertEqual(
+            section["transponders"],
+            [
+                {"serial": "000BASE", "title": "000BASE · Basis"},
+                {
+                    "serial": "000base-lower",
+                    "title": "000base-lower · ASTA 42",
+                },
+                {"serial": "000BASE-UNNAMED", "title": "000BASE-UNNAMED"},
+            ],
+        )
 
     def test_individual_appendix_uses_desired_minus_inherited(self):
         report = pdf_export.build_access_report_data()
@@ -200,7 +218,12 @@ class AccessReportMarkdownTests(TestCase):
                             ],
                         }
                     ],
-                    "serials": ["010A0SC"],
+                    "transponders": [
+                        {
+                            "serial": "010A0SC",
+                            "title": "010A0SC · Rossmeier, Justus",
+                        }
+                    ],
                     "ungrouped": False,
                 }
             ],
@@ -229,7 +252,7 @@ class AccessReportMarkdownTests(TestCase):
   - Haupteingang 008 West
 
 ### Transponder
-- 010A0SC
+- 010A0SC · Rossmeier, Justus
 
 # Zusätzliche individuelle Türen
 
@@ -247,7 +270,7 @@ class AccessReportMarkdownTests(TestCase):
         data["sections"][0]["title"] = "#Group *x* [a] \\"
         data["sections"][0]["locations"][0]["name"] = "> Basement"
         data["sections"][0]["locations"][0]["locks"][0]["label"] = "- Door_`x`"
-        data["sections"][0]["serials"] = ["+SERIAL"]
+        data["sections"][0]["transponders"][0]["title"] = "+SERIAL · Name_[x]"
         data["individuals"][0]["title"] = "=TP [name]"
 
         markdown = pdf_export.render_access_report_markdown(data)
@@ -255,7 +278,7 @@ class AccessReportMarkdownTests(TestCase):
         self.assertIn("## \\#Group \\*x\\* \\[a\\] \\\\", markdown)
         self.assertIn(r"- **\> Basement**", markdown)
         self.assertIn(r"  - \- Door\_\`x\`", markdown)
-        self.assertIn(r"- \+SERIAL", markdown)
+        self.assertIn(r"- \+SERIAL · Name\_\[x\]", markdown)
         self.assertIn(r"## \=TP \[name\]", markdown)
 
     def test_renders_group_and_report_empty_states(self):

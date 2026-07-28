@@ -32,9 +32,9 @@
   }
 }
 
-#let serial-list(serials) = {
-  for serial in serials {
-    text(font: ("Courier", "Courier New"), size: 8.5pt)[#serial]
+#let transponder-list(transponders) = {
+  for transponder in transponders {
+    text(font: ("Courier", "Courier New"), size: 8.5pt)[#transponder.title]
     linebreak()
   }
 }
@@ -65,7 +65,7 @@
     v(6pt)
     text(9pt, weight: "bold")[Transponder]
     linebreak()
-    serial-list(section.serials)
+    transponder-list(section.transponders)
   })
 }
 

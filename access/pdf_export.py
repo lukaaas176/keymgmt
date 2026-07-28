@@ -310,10 +310,20 @@ def build_access_report_data(*, today: dt.date | None = None) -> dict:
                 "base_title": base_title,
                 "title": base_title,
                 "locations": _report_locations(doors),
-                "serials": sorted(
-                    (item.serial for item in combination["items"]),
-                    key=lambda serial: (serial.casefold(), serial),
-                ),
+                "transponders": [
+                    {
+                        "serial": item.serial,
+                        "title": (
+                            item.serial
+                            if item.label == item.serial
+                            else f"{item.serial} · {item.label}"
+                        ),
+                    }
+                    for item in sorted(
+                        combination["items"],
+                        key=lambda item: (item.serial.casefold(), item.serial),
+                    )
+                ],
                 "ungrouped": ungrouped,
             }
         )
@@ -404,7 +414,10 @@ def render_access_report_markdown(data: dict) -> str:
         else:
             lines.append("_Keine Gruppentüren._")
         lines.extend(["", "### Transponder"])
-        lines.extend(f"- {_markdown_escape(serial)}" for serial in section["serials"])
+        lines.extend(
+            f"- {_markdown_escape(transponder['title'])}"
+            for transponder in section["transponders"]
+        )
         lines.append("")
 
     lines.extend(["# Zusätzliche individuelle Türen", ""])
