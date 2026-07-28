@@ -60,6 +60,7 @@
           <a href="{% url 'overlap' %}" class="nav-link {% if nav == 'overlap' %}nav-active{% endif %}">Überschneidung</a>
           <a href="{% url 'individual_access' %}" class="nav-link {% if nav == 'individual' %}nav-active{% endif %}">Individuell</a>
           <a href="{% url 'soll_matrix' %}" class="nav-link {% if nav == 'soll' %}nav-active{% endif %}">Soll</a>
+          <a href="{% url 'data_page' %}" data-page-link class="nav-link {% if nav == 'data' %}nav-active{% endif %}">Daten</a>
           {% if user.is_authenticated %}
           <form method="post" action="{% url 'logout' %}" class="ml-1 pl-1 border-l border-slate-200">{% csrf_token %}
             <button class="nav-link text-slate-400 hover:text-rose-600" title="Angemeldet als {{ user.get_username }}">Abmelden</button>
@@ -77,6 +78,7 @@
         <a href="{% url 'overlap' %}" class="nav-link {% if nav == 'overlap' %}nav-active{% endif %}">Überschneidung</a>
         <a href="{% url 'individual_access' %}" class="nav-link {% if nav == 'individual' %}nav-active{% endif %}">Individuell</a>
         <a href="{% url 'soll_matrix' %}" class="nav-link {% if nav == 'soll' %}nav-active{% endif %}">Soll</a>
+        <a href="{% url 'data_page' %}" data-page-link class="nav-link {% if nav == 'data' %}nav-active{% endif %}">Daten</a>
         {% if user.is_authenticated %}
         <form method="post" action="{% url 'logout' %}">{% csrf_token %}
           <button class="nav-link text-slate-400 hover:text-rose-600">Abmelden ({{ user.get_username }})</button>

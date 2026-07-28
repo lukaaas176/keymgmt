@@ -59,6 +59,24 @@ see **[DEPLOY.md](DEPLOY.md)**.
 Re-importing a transponder refreshes its data and access set, so uploading an
 updated printout is safe and idempotent.
 
+### Portable website backups
+
+The **Daten** page exports all Schließmatrix domain data as one versioned JSON
+file: doors, transponders, groups, metadata, and every current, planned, removed,
+and desired authorization. Login accounts, passwords, sessions, and Django
+internals are never included.
+
+The same page imports a backup in either of two modes:
+
+- **Zusammenführen** updates matching records from the backup and retains records
+  that exist only on the current site.
+- **Alle Daten ersetzen** validates the complete file and then atomically replaces
+  the domain data so it exactly matches the backup. This requires an explicit
+  confirmation.
+
+This portable JSON workflow is separate from SimonsVoss printout imports, PDF
+reports, and the deployment-level SQLite backups described in `DEPLOY.md`.
+
 ### How matrix imports behave
 
 Matrix printouts — especially scanned ones — are a lossier source than the
@@ -98,6 +116,13 @@ per-transponder list printouts, so they are imported conservatively:
   (locked) from individual doors. Matrix, Soll/Ist, and reprogramming-worklist
   PDFs use the same flattened group label. Hollow-cross (`wird entfernt`) marks
   from a matrix show up as pending removals throughout.
+- **Zugangsübersicht** — from the group list, export exact group combinations
+  such as `AStA A` or `AStA LT`: each section lists inherited group doors before
+  exact transponder serials. A final appendix lists additional individual Soll
+  doors by transponder. The same report is available as copyable Markdown and an
+  A4 PDF.
+- **Daten** — download a portable, domain-only JSON backup or import one by
+  merging it into the current state or replacing the state exactly.
 
 ## Authentication
 

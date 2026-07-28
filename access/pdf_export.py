@@ -16,10 +16,14 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import shutil
 import subprocess
 import tempfile
+from collections import Counter, defaultdict
 from pathlib import Path
+
+from django.utils import timezone
 
 from .group_labels import combined_group_label
 from .models import Lock, Transponder
@@ -27,6 +31,7 @@ from .models import Lock, Transponder
 _PDF_DIR = Path(__file__).resolve().parent / "templates" / "pdf"
 TEMPLATE = _PDF_DIR / "matrix.typ"
 CHANGES_TEMPLATE = _PDF_DIR / "changes.typ"
+ACCESS_REPORT_TEMPLATE = _PDF_DIR / "access_report.typ"
 SCOPES = ("all", "active", "planned")
 SIZES = ("a4", "a3")
 MODES = ("matrix", "diff", "changes")
@@ -48,7 +53,7 @@ def _transponders_and_doors(*relations):
 def _meta(transponders, doors, **extra):
     return {
         "title": "Schließmatrix",
-        "generated": extra.pop("today", dt.date.today()).isoformat(),
+        "generated": extra.pop("today", timezone.localdate()).isoformat(),
         "transponders": [
             {
                 "label": t.label,
@@ -103,7 +108,7 @@ def build_matrix_data(scope: str = "all", *, today: dt.date | None = None) -> di
         doors,
         mode="matrix",
         scope=scope,
-        today=today or dt.date.today(),
+        today=today or timezone.localdate(),
         marks=marks,
     )
 
@@ -163,7 +168,7 @@ def build_diff_data(*, today: dt.date | None = None, hide_empty: bool = False) -
         doors,
         mode="diff",
         scope="diff",
-        today=today or dt.date.today(),
+        today=today or timezone.localdate(),
         marks=marks,
         counts={"ok": n_ok, "add": n_add, "remove": n_remove},
     )
@@ -241,11 +246,179 @@ def build_changes_data(*, today: dt.date | None = None) -> dict:
 
     return {
         "title": "Ausstehende Änderungen",
-        "generated": (today or dt.date.today()).isoformat(),
+        "generated": (today or timezone.localdate()).isoformat(),
         "mode": "changes",
         "counts": {"add": tot_add, "remove": tot_remove, "transponders": len(changes)},
         "changes": changes,
     }
+
+
+def _report_locations(locks) -> list[dict]:
+    by_serial = {lock.serial: lock for lock in locks}
+    by_location = defaultdict(list)
+    for lock in by_serial.values():
+        location = lock.location or lock.area or "Ohne Standort"
+        by_location[location].append({"serial": lock.serial, "label": lock.label})
+    ordered_locations = sorted(
+        by_location,
+        key=lambda value: (value == "Ohne Standort", value.casefold(), value),
+    )
+    return [
+        {
+            "name": location,
+            "locks": sorted(
+                by_location[location],
+                key=lambda lock: (
+                    lock["label"].casefold(),
+                    lock["serial"].casefold(),
+                    lock["serial"],
+                ),
+            ),
+        }
+        for location in ordered_locations
+    ]
+
+
+def build_access_report_data(*, today: dt.date | None = None) -> dict:
+    transponders = list(
+        Transponder.objects.prefetch_related("groups__doors", "desired_locks").order_by(
+            "serial"
+        )
+    )
+    combinations = {}
+    transponder_groups = {}
+    for transponder in transponders:
+        groups = sorted(
+            transponder.groups.all(),
+            key=lambda group: (group.export_code.casefold(), group.export_code),
+        )
+        codes = tuple(group.export_code for group in groups)
+        transponder_groups[transponder.serial] = groups
+        combination = combinations.setdefault(codes, {"groups": groups, "items": []})
+        combination["items"].append(transponder)
+
+    sections = []
+    for codes, combination in combinations.items():
+        groups = combination["groups"]
+        key = "+".join(codes)
+        ungrouped = not codes
+        base_title = "Ohne Gruppe" if ungrouped else combined_group_label(groups)
+        doors = [door for group in groups for door in group.doors.all()]
+        sections.append(
+            {
+                "key": key,
+                "base_title": base_title,
+                "title": base_title,
+                "locations": _report_locations(doors),
+                "serials": sorted(
+                    (item.serial for item in combination["items"]),
+                    key=lambda serial: (serial.casefold(), serial),
+                ),
+                "ungrouped": ungrouped,
+            }
+        )
+
+    sections.sort(
+        key=lambda section: (
+            section["ungrouped"],
+            section["base_title"].casefold(),
+            section["key"].casefold(),
+            section["key"],
+        )
+    )
+    title_counts = Counter(
+        section["base_title"] for section in sections if not section["ungrouped"]
+    )
+    for section in sections:
+        if not section["ungrouped"] and title_counts[section["base_title"]] > 1:
+            section["title"] = f"{section['base_title']} ({section['key']})"
+
+    individuals = []
+    for transponder in sorted(
+        transponders, key=lambda item: (item.serial.casefold(), item.serial)
+    ):
+        inherited = {
+            door.serial
+            for group in transponder_groups[transponder.serial]
+            for door in group.doors.all()
+        }
+        individual_doors = [
+            door
+            for door in transponder.desired_locks.all()
+            if door.serial not in inherited
+        ]
+        locations = _report_locations(individual_doors)
+        if not locations:
+            continue
+        label = transponder.label
+        individuals.append(
+            {
+                "serial": transponder.serial,
+                "label": label,
+                "title": (
+                    transponder.serial
+                    if label == transponder.serial
+                    else f"{transponder.serial} · {label}"
+                ),
+                "locations": locations,
+            }
+        )
+
+    return {
+        "title": "Zugangsübersicht nach Exportgruppe",
+        "generated": (today or timezone.localdate()).isoformat(),
+        "mode": "access_report",
+        "sections": sections,
+        "individuals": individuals,
+    }
+
+
+def _markdown_escape(value: str) -> str:
+    escaped = value.replace("\\", "\\\\")
+    for char in ("`", "*", "_", "[", "]"):
+        escaped = escaped.replace(char, f"\\{char}")
+    return re.sub(r"^(\s*)([#>+\-=])", r"\1\\\2", escaped)
+
+
+def _append_markdown_locations(lines: list[str], locations: list[dict]) -> None:
+    for location in locations:
+        lines.append(f"- **{_markdown_escape(location['name'])}**")
+        for lock in location["locks"]:
+            lines.append(f"  - {_markdown_escape(lock['label'])}")
+
+
+def render_access_report_markdown(data: dict) -> str:
+    lines = [f"# {_markdown_escape(data['title'])}", ""]
+    if not data["sections"]:
+        lines.extend(["_Keine Exportgruppen._", ""])
+    for section in data["sections"]:
+        lines.extend(
+            [
+                f"## {_markdown_escape(section['title'])}",
+                "",
+                "### Türen",
+            ]
+        )
+        if section["locations"]:
+            _append_markdown_locations(lines, section["locations"])
+        else:
+            lines.append("_Keine Gruppentüren._")
+        lines.extend(["", "### Transponder"])
+        lines.extend(f"- {_markdown_escape(serial)}" for serial in section["serials"])
+        lines.append("")
+
+    lines.extend(["# Zusätzliche individuelle Türen", ""])
+    if not data["individuals"]:
+        lines.append("_Keine zusätzlichen individuellen Türen._")
+    for individual in data["individuals"]:
+        lines.append(f"## {_markdown_escape(individual['title'])}")
+        _append_markdown_locations(lines, individual["locations"])
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def export_access_report_pdf(*, today: dt.date | None = None) -> bytes:
+    return render_pdf(build_access_report_data(today=today), "a4")
 
 
 def render_pdf(data: dict, size: str = "a3") -> bytes:
@@ -263,7 +436,13 @@ def render_pdf(data: dict, size: str = "a3") -> bytes:
         )
 
     mode = data.get("mode", "matrix")
-    template = CHANGES_TEMPLATE if mode == "changes" else TEMPLATE
+    template = (
+        CHANGES_TEMPLATE
+        if mode == "changes"
+        else ACCESS_REPORT_TEMPLATE
+        if mode == "access_report"
+        else TEMPLATE
+    )
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         (tmp / "data.json").write_text(json.dumps(data), encoding="utf-8")
@@ -283,6 +462,7 @@ def render_pdf(data: dict, size: str = "a3") -> bytes:
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         if proc.returncode != 0:
             raise RuntimeError(f"typst compile failed:\n{proc.stderr.strip()}")

@@ -1,0 +1,94 @@
+{% extends "access/base.html" %}
+{% block title %}Daten · Schließmatrix{% endblock %}
+{% block content %}
+<div class="max-w-5xl">
+  <p class="eyebrow">Sicherung &amp; Umzug</p>
+  <h1 class="h-title mt-1 text-3xl sm:text-4xl">Daten sicher bewegen</h1>
+  <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-500 sm:text-base">Eine portable Sicherung enthält Türen, Transponder, Gruppen und alle Berechtigungszustände. Sie eignet sich für einen Umzug oder einen kontrollierten Datenabgleich.</p>
+</div>
+
+<section class="mt-8 overflow-hidden rounded-2xl bg-slate-900 text-white shadow-xl shadow-slate-300/40">
+  <div class="grid gap-8 px-6 py-7 sm:px-8 sm:py-9 lg:grid-cols-[1fr_auto] lg:items-center">
+    <div class="max-w-2xl">
+      <div class="flex items-center gap-3">
+        <span class="grid h-10 w-10 place-items-center rounded-xl bg-white/10 ring-1 ring-white/15" aria-hidden="true">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
+        </span>
+        <h2 class="font-display text-xl font-semibold tracking-tight">Daten sichern</h2>
+      </div>
+      <p class="mt-4 text-sm leading-6 text-slate-300">Der Download ist eine versionierte JSON-Datei mit dem vollständigen fachlichen Stand dieser Schließmatrix.</p>
+      <p class="mt-2 flex items-start gap-2 text-sm text-slate-400">
+        <svg class="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m5 12 4 4L19 6"/></svg>
+        Anmeldekonten werden nicht exportiert. Passwörter und Sitzungen bleiben ausschließlich auf diesem System.
+      </p>
+    </div>
+    <a href="{% url 'data_export' %}" class="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-indigo-950 shadow-md shadow-black/20 transition hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-slate-900 lg:w-auto">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
+      JSON-Sicherung laden
+    </a>
+  </div>
+</section>
+
+<form method="post" action="{% url 'data_import' %}" enctype="multipart/form-data"
+      class="mt-10" x-data="{ mode: 'merge', fileName: '', submitting: false }" @submit="submitting = true">
+  {% csrf_token %}
+  <div class="flex flex-col gap-2 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <h2 class="h-title text-2xl">Daten importieren</h2>
+      <p class="mt-1 text-sm text-slate-500">Wähle eine Schließmatrix-Sicherung und entscheide, wie sie angewendet wird.</p>
+    </div>
+    <span class="font-mono text-[11px] text-slate-400">JSON · maximal 10 MiB</span>
+  </div>
+
+  <div class="grid gap-7 py-7 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-10">
+    <div>
+      <label for="backup-file" class="block text-sm font-semibold text-slate-800">Sicherungsdatei</label>
+      <label for="backup-file" class="mt-3 flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white px-5 py-8 text-center transition hover:border-indigo-400 hover:bg-indigo-50/40 focus-within:border-indigo-500 focus-within:ring-4 focus-within:ring-indigo-100">
+        <svg class="h-8 w-8 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0L8 8m4-4 4 4M5 16v3h14v-3"/></svg>
+        <span class="mt-3 text-sm font-medium text-indigo-600" x-text="fileName || 'JSON-Datei auswählen'">JSON-Datei auswählen</span>
+        <span class="mt-1 text-xs text-slate-400">Nur Sicherungen aus der Schließmatrix</span>
+        <input id="backup-file" type="file" name="backup" required accept="application/json,.json" class="sr-only" @change="fileName = $event.target.files[0]?.name || ''">
+      </label>
+    </div>
+
+    <fieldset>
+      <legend class="text-sm font-semibold text-slate-800">Importmodus</legend>
+      <div class="mt-3 space-y-3">
+        <label class="flex cursor-pointer gap-4 rounded-xl bg-white p-4 ring-1 transition"
+               :class="mode === 'merge' ? 'ring-2 ring-indigo-500 shadow-sm' : 'ring-slate-200 hover:ring-slate-300'">
+          <input type="radio" name="mode" value="merge" checked x-model="mode" class="mt-1 h-4 w-4 border-slate-300 text-indigo-600 focus:ring-indigo-500">
+          <span>
+            <span class="block font-medium text-slate-900">Zusammenführen</span>
+            <span class="mt-1 block text-sm leading-5 text-slate-500">Importierte Datensätze gewinnen bei Treffern. Datensätze, die nur hier vorhanden sind, bleiben erhalten.</span>
+          </span>
+        </label>
+        <label class="flex cursor-pointer gap-4 rounded-xl bg-white p-4 ring-1 transition"
+               :class="mode === 'replace' ? 'ring-2 ring-rose-500 shadow-sm' : 'ring-slate-200 hover:ring-slate-300'">
+          <input type="radio" name="mode" value="replace" x-model="mode" class="mt-1 h-4 w-4 border-slate-300 text-rose-600 focus:ring-rose-500">
+          <span>
+            <span class="block font-medium text-slate-900">Alle Daten ersetzen</span>
+            <span class="mt-1 block text-sm leading-5 text-slate-500">Der fachliche Stand wird exakt auf den Inhalt der Sicherung zurückgesetzt.</span>
+          </span>
+        </label>
+      </div>
+
+      <div x-show="mode === 'replace'" x-transition.opacity class="mt-4 rounded-xl bg-rose-50 p-4 ring-1 ring-rose-200" style="display:none">
+        <p class="text-sm font-semibold text-rose-900">Bestehende Schließmatrix-Daten werden gelöscht</p>
+        <p class="mt-1 text-sm leading-5 text-rose-700">Konten bleiben erhalten, aber Türen, Transponder, Gruppen und Berechtigungen werden vollständig ersetzt.</p>
+        <label class="mt-3 flex cursor-pointer items-start gap-2.5 text-sm font-medium text-rose-900">
+          <input type="checkbox" name="confirm_replace" value="on" :required="mode === 'replace'" :disabled="mode !== 'replace'" class="mt-0.5 h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-rose-500">
+          Ich bestätige das vollständige Ersetzen der Daten.
+        </label>
+      </div>
+    </fieldset>
+  </div>
+
+  <div class="flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
+    <p class="text-xs leading-5 text-slate-400">Die Datei wird vollständig geprüft, bevor Daten verändert werden.</p>
+    <button type="submit" class="btn-primary min-w-40 py-2.5 disabled:cursor-wait disabled:opacity-60" :disabled="submitting">
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0-4-4m4 4 4-4M5 17v2h14v-2"/></svg>
+      <span x-text="submitting ? 'Wird geprüft …' : 'Daten importieren'">Daten importieren</span>
+    </button>
+  </div>
+</form>
+{% endblock %}

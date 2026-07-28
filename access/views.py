@@ -1,19 +1,21 @@
 import json
+import logging
 import os
 import tempfile
 from collections import defaultdict
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
+from django.db import DatabaseError, IntegrityError, transaction
 from django.db.models import Count
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
 
-from . import ocr, pdf_export, soll
+from . import data_transfer, ocr, pdf_export, soll
 from .forms import LockForm, TransponderForm
 from .group_labels import (
     combined_group_label,
@@ -25,6 +27,67 @@ from .models import Group, Lock, Transponder
 from .services import import_pdf
 
 ACCENT_RGB = "79,70,229"  # indigo-600, used for heatmap intensity
+logger = logging.getLogger(__name__)
+
+
+# --- domain data transfer ---------------------------------------------------
+
+
+def data_page(request):
+    return render(request, "access/data_transfer.html", {"nav": "data"})
+
+
+def data_export(request):
+    response = HttpResponse(
+        data_transfer.encode_backup(),
+        content_type="application/json; charset=utf-8",
+    )
+    filename = f"schliessmatrix-backup-{timezone.localdate().isoformat()}.json"
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["Cache-Control"] = "private, no-store"
+    response["Pragma"] = "no-cache"
+    return response
+
+
+@require_POST
+def data_import(request):
+    files = request.FILES.getlist("backup")
+    if len(files) != 1:
+        messages.error(request, "Bitte genau eine Sicherungsdatei auswählen.")
+        return redirect("data_page")
+
+    mode = request.POST.get("mode", "")
+    try:
+        result = data_transfer.restore_backup(
+            files[0].read(data_transfer.MAX_BACKUP_BYTES + 1),
+            mode=mode,
+            replace_confirmed=request.POST.get("confirm_replace") == "on",
+        )
+    except data_transfer.BackupValidationError as exc:
+        messages.error(request, str(exc))
+    except DatabaseError:
+        logger.exception("Domain data import failed")
+        messages.error(
+            request, "Import fehlgeschlagen. Die Daten wurden nicht verändert."
+        )
+    else:
+        if result.mode == "replace":
+            messages.success(
+                request,
+                "Ersetzen abgeschlossen: "
+                f"{result.created_locks} Türen, {result.created_groups} Gruppen und "
+                f"{result.created_transponders} Transponder wiederhergestellt.",
+            )
+        else:
+            messages.success(
+                request,
+                "Zusammenführen abgeschlossen: "
+                f"{result.created_locks} Tür neu, {result.updated_locks} aktualisiert; "
+                f"{result.created_groups} Gruppen neu, {result.updated_groups} aktualisiert; "
+                f"{result.created_transponders} Transponder neu, "
+                f"{result.updated_transponders} aktualisiert.",
+            )
+    return redirect("data_page")
 
 
 # --- upload -----------------------------------------------------------------
@@ -142,6 +205,34 @@ def export_pdf(request):
         f'attachment; filename="schliessmatrix-{tag}-{size}.pdf"'
     )
     return resp
+
+
+def access_report(request):
+    report = pdf_export.build_access_report_data()
+    return render(
+        request,
+        "access/access_report.html",
+        {
+            "report": report,
+            "markdown": pdf_export.render_access_report_markdown(report),
+            "nav": "soll",
+        },
+    )
+
+
+def access_report_pdf(request):
+    try:
+        pdf = pdf_export.export_access_report_pdf()
+    except RuntimeError:
+        logger.exception("Access report PDF export failed")
+        messages.error(
+            request, "PDF-Export fehlgeschlagen. Bitte Typst-Installation prüfen."
+        )
+        return redirect("access_report")
+    response = HttpResponse(pdf, content_type="application/pdf")
+    filename = f"zugangsuebersicht-{timezone.localdate().isoformat()}.pdf"
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
 
 
 # --- dashboard --------------------------------------------------------------
