@@ -1,13 +1,17 @@
 from django.db import models
+from django.db.models.functions import Lower
+
+from .group_labels import derive_export_code, normalize_export_code
 
 
 class Lock(models.Model):
     """A physical lock cylinder, identified by its SimonsVoss serial."""
+
     serial = models.CharField(max_length=32, primary_key=True)
     door_name = models.CharField(max_length=255, blank=True)
     room_number = models.CharField(max_length=64, blank=True)
-    location = models.CharField(max_length=64, blank=True)   # Standort.Gebäude.Etage
-    area = models.CharField(max_length=64, blank=True)       # Bereich
+    location = models.CharField(max_length=64, blank=True)  # Standort.Gebäude.Etage
+    area = models.CharField(max_length=64, blank=True)  # Bereich
 
     class Meta:
         ordering = ["location", "door_name", "serial"]
@@ -31,11 +35,48 @@ class Lock(models.Model):
 class Group(models.Model):
     """A reusable named door-set (e.g. "AStA Allgemein"). Assigning a group to
     a transponder adds its doors to that transponder's desired ("Soll") set."""
+
     name = models.CharField(max_length=128, unique=True)
+    export_code = models.CharField(max_length=4)
+    is_implicit = models.BooleanField(default=False)
     doors = models.ManyToManyField(Lock, related_name="groups", blank=True)
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(export_code__regex=r"^[A-Z0-9]{1,4}\Z"),
+                name="access_group_export_code_format",
+            ),
+            models.UniqueConstraint(
+                Lower("export_code"),
+                name="access_group_export_code_ci_unique",
+            ),
+            models.UniqueConstraint(
+                fields=["is_implicit"],
+                condition=models.Q(is_implicit=True),
+                name="access_group_single_implicit",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.export_code:
+            self.export_code = normalize_export_code(self.export_code)
+
+    def save(self, *args, **kwargs):
+        if self.export_code:
+            self.export_code = normalize_export_code(self.export_code)
+        elif self._state.adding:
+            used = (
+                type(self)
+                .objects.exclude(pk=self.pk)
+                .values_list("export_code", flat=True)
+            )
+            self.export_code = derive_export_code(self.name, used)
+        else:
+            self.export_code = normalize_export_code(self.export_code)
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name
@@ -47,6 +88,7 @@ class Group(models.Model):
 
 class Transponder(models.Model):
     """A transponder and the set of locks it may open."""
+
     serial = models.CharField(max_length=32, primary_key=True)
     asta_number = models.IntegerField(null=True, blank=True)
     person_name = models.CharField(max_length=255, blank=True)
@@ -62,24 +104,26 @@ class Transponder(models.Model):
     # in a locking matrix — "erteilt sobald Update am Terminal"). Only a
     # matrix export distinguishes these; other sources leave it empty.
     planned_locks = models.ManyToManyField(
-        Lock, related_name="planned_transponders", blank=True)
+        Lock, related_name="planned_transponders", blank=True
+    )
     # The target state we WANT programmed ("Soll") — curated in the admin or
     # seeded from the configured state. The diff export compares this wish
     # against the configured (active ∪ planned) state: matches are green,
     # doors that must still be added or removed are red.
     desired_locks = models.ManyToManyField(
-        Lock, related_name="desired_transponders", blank=True)
+        Lock, related_name="desired_transponders", blank=True
+    )
     # Doors this transponder is currently PROGRAMMED to open but whose
     # authorisation was withdrawn in the source matrix (hollow outline × —
     # pending removal at the next terminal update). Part of the Ist-Zustand:
     # still physically openable now, but on its way out.
     removed_locks = models.ManyToManyField(
-        Lock, related_name="removed_transponders", blank=True)
+        Lock, related_name="removed_transponders", blank=True
+    )
     # Groups this transponder belongs to. Membership is a convenience: the
     # effective Soll is desired_locks, kept in sync when a group is assigned /
     # unassigned or its doors change (see access/soll.py).
-    groups = models.ManyToManyField(Group, related_name="transponders",
-                                    blank=True)
+    groups = models.ManyToManyField(Group, related_name="transponders", blank=True)
 
     class Meta:
         ordering = ["asta_number", "person_name", "serial"]

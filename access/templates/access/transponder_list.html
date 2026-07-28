@@ -24,19 +24,22 @@
           <th class="px-4 py-3 font-medium">Inhaber</th>
           <th class="px-4 py-3 font-medium">Seriennr.</th>
           <th class="px-4 py-3 font-medium hidden sm:table-cell">ASTA</th>
+          <th class="px-4 py-3 font-medium hidden md:table-cell">Gruppe</th>
           <th class="px-4 py-3 font-medium text-right">Türen</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-100">
         {% for t in transponders %}
-        <tr data-search="{{ t.label|lower }} {{ t.serial|lower }} {{ t.asta_number|default:'' }}"
+        <tr data-search="{{ t.label|lower }} {{ t.serial|lower }} {{ t.asta_number|default:'' }} {{ t.group_label|lower }}"
             x-show="!q || $el.dataset.search.includes(q.toLowerCase())"
             class="hover:bg-slate-50 transition">
           <td class="px-4 py-3">
             <a href="{% url 'transponder_detail' t.serial %}" class="font-medium text-slate-900 hover:text-indigo-600">{{ t.label }}</a>
+            <div class="mt-1 md:hidden">{% if t.group_label %}<span class="chip">{{ t.group_label }}</span>{% else %}<span class="text-slate-300">&mdash;</span>{% endif %}</div>
           </td>
           <td class="px-4 py-3"><span class="chip">{{ t.serial }}</span></td>
           <td class="px-4 py-3 hidden sm:table-cell text-slate-500">{% if t.asta_number is not None %}{{ t.asta_number }}{% else %}<span class="text-slate-300">—</span>{% endif %}</td>
+          <td class="px-4 py-3 hidden md:table-cell">{% if t.group_label %}<span class="chip">{{ t.group_label }}</span>{% else %}<span class="text-slate-300">&mdash;</span>{% endif %}</td>
           <td class="px-4 py-3 text-right font-display font-semibold text-slate-900">{{ t.n }}</td>
         </tr>
         {% endfor %}

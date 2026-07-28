@@ -103,11 +103,11 @@
   })
 
   let cells = ()
-  // Group band: rotated group name(s) over each transponder column.
+  // Group band: rotated combined group label over each transponder column.
   cells.push(box(height: groupbandh, inset: 2pt,
     align(bottom + left, text(6pt, fill: luma(120))[GRUPPE])))
   for c in tblk {
-    let g = if c.groups.len() > 0 { c.groups.join(", ") } else { "" }
+    let g = c.group
     cells.push(box(height: groupbandh, width: cell, inset: (bottom: 3pt),
       align(bottom + center,
         rotate(-90deg, reflow: true,

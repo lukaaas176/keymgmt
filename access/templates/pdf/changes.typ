@@ -70,6 +70,9 @@
       h(6pt)
       text(fill: muted, size: 8pt)[#t.serial]
       if t.asta != none { text(fill: muted, size: 8pt)[ · ASTA #t.asta] }
+      if t.group != "" {
+        text(fill: rgb("#4f46e5"), size: 8pt, weight: "medium")[ · #t.group]
+      }
       h(1fr)
       if t.remove.len() > 0 { text(fill: rem-col, size: 8pt, weight: "bold")[−#t.remove.len()] }
       if t.add.len() > 0 { text(fill: add-col, size: 8pt, weight: "bold")[  +#t.add.len()] }

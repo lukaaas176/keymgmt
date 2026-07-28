@@ -18,35 +18,55 @@ import tempfile
 import unittest
 from unittest import mock
 
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
+from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 
 from . import ocr, services
-from .matrix_parser import (RE_FOOTER, MatrixDoor, MatrixPerson, MatrixResult,
-                            detect_format, lookalike_equal, parse_matrix_pdf,
-                            repair_serial)
+from .group_labels import (
+    combined_group_label,
+    derive_export_code,
+    normalize_export_code,
+    set_group_export_metadata,
+)
+from .matrix_parser import (
+    RE_FOOTER,
+    MatrixDoor,
+    MatrixPerson,
+    MatrixResult,
+    detect_format,
+    lookalike_equal,
+    parse_matrix_pdf,
+    repair_serial,
+)
 from .models import Group, Lock, Transponder
 
-SCAN_PDF = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "scan.pdf"))
+SCAN_PDF = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scan.pdf"))
 HAVE_SCAN = os.path.exists(SCAN_PDF)
 SCREENSHOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "screenshot.png"))
+    os.path.join(os.path.dirname(__file__), "..", "screenshot.png")
+)
 HAVE_SHOT = os.path.exists(SCREENSHOT) and ocr.tesseract_available()
 TOCHECK = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "to_check"))
 HAVE_TOCHECK = os.path.isdir(TOCHECK) and os.path.exists(
-    os.path.join(TOCHECK, "Lukas.pdf"))
+    os.path.join(TOCHECK, "Lukas.pdf")
+)
 import shutil
+
 HAVE_TYPST = shutil.which("typst") is not None
 ASTA_PDF = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "ASTA-2026.pdf"))
+    os.path.join(os.path.dirname(__file__), "..", "ASTA-2026.pdf")
+)
 ASTA_CSV = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "ASTA-2026.csv"))
+    os.path.join(os.path.dirname(__file__), "..", "ASTA-2026.csv")
+)
 HAVE_ASTA = os.path.exists(ASTA_PDF)
 HAVE_ASTA_CSV = HAVE_ASTA and os.path.exists(ASTA_CSV)
 
 
 # --- Raw-PDF synthesis helpers ------------------------------------------------
+
 
 def _esc(text: str) -> str:
     """Escape a string for a PDF literal, latin-1 bytes as octal."""
@@ -77,17 +97,21 @@ def _pdf_bytes(content_streams: list[str]) -> bytes:
     page_ids = [4 + 2 * i for i in range(n_pages)]
     kids = " ".join(f"{pid} 0 R" for pid in page_ids)
     objs.append(b"<< /Type /Catalog /Pages 2 0 R >>")
-    objs.append(f"<< /Type /Pages /Kids [{kids}] /Count {n_pages} >>"
-                .encode())
-    objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica"
-                b" /Encoding /WinAnsiEncoding >>")
+    objs.append(f"<< /Type /Pages /Kids [{kids}] /Count {n_pages} >>".encode())
+    objs.append(
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica"
+        b" /Encoding /WinAnsiEncoding >>"
+    )
     for i, cs in enumerate(content_streams):
         data = cs.encode("latin-1")
-        objs.append((f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842]"
-                     f" /Resources << /Font << /F1 3 0 R >> >>"
-                     f" /Contents {page_ids[i] + 1} 0 R >>").encode())
-        objs.append(b"<< /Length %d >>\nstream\n%s\nendstream"
-                    % (len(data), data))
+        objs.append(
+            (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842]"
+                f" /Resources << /Font << /F1 3 0 R >> >>"
+                f" /Contents {page_ids[i] + 1} 0 R >>"
+            ).encode()
+        )
+        objs.append(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(data), data))
 
     out = bytearray(b"%PDF-1.4\n")
     offsets = [0]
@@ -98,8 +122,10 @@ def _pdf_bytes(content_streams: list[str]) -> bytes:
     out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
     for off in offsets[1:]:
         out += b"%010d 00000 n \n" % off
-    out += (b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF"
-            % (len(objs) + 1, xref_at))
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF" % (
+        len(objs) + 1,
+        xref_at,
+    )
     return bytes(out)
 
 
@@ -117,8 +143,8 @@ def _matrix_page(persons, doors=(), footer="", col_offset=0) -> str:
     parts = []
     for i, (name, serial) in enumerate(persons):
         x = COL_X0 + (col_offset + i) * COL_PITCH
-        parts.append(_rotated(x, 560, serial))       # the SN band
-        parts.append(_rotated(x, 620, name))         # name above it
+        parts.append(_rotated(x, 560, serial))  # the SN band
+        parts.append(_rotated(x, 620, name))  # name above it
     if doors:
         parts.append(_upright(40, 452, "NAME (TÜREN/SCHLIESSUNGEN)"))
         parts.append(_upright(160, 452, "PB"))
@@ -149,24 +175,32 @@ def _write_pdf(content_streams) -> str:
     return path
 
 
-PERSONS_P1 = [("ASTA 1 Muster, Anna", "03UAG03"),
-              ("ASTA 2", "02UH4PG"),
-              ("Winner, Henry", "03TN2G5")]
+PERSONS_P1 = [
+    ("ASTA 1 Muster, Anna", "03UAG03"),
+    ("ASTA 2", "02UH4PG"),
+    ("Winner, Henry", "03TN2G5"),
+]
 PERSONS_P2 = [("V Tresor, Flo, Nicht vorhanden 03U4345", "03U4345")]
-DOORS_P1 = [("5532 Eingang Studitum", "0.002", "EG", [0, 2]),
-            ("5532 AStA-Besprechungsraum", "1.105", "1.OG", [1]),
-            ("5532 Bandraum U 20", "U20", "UG", [0, 1, 2])]
-DOORS_P2 = [("5532 Eingang Studitum", "0.002", "EG", [0]),
-            ("5532 AStA-Besprechungsraum", "1.105", "1.OG", []),
-            ("5532 Bandraum U 20", "U20", "UG", [0])]
+DOORS_P1 = [
+    ("5532 Eingang Studitum", "0.002", "EG", [0, 2]),
+    ("5532 AStA-Besprechungsraum", "1.105", "1.OG", [1]),
+    ("5532 Bandraum U 20", "U20", "UG", [0, 1, 2]),
+]
+DOORS_P2 = [
+    ("5532 Eingang Studitum", "0.002", "EG", [0]),
+    ("5532 AStA-Besprechungsraum", "1.105", "1.OG", []),
+    ("5532 Bandraum U 20", "U20", "UG", [0]),
+]
 
 
 def _synthetic_matrix() -> str:
     """Two-page matrix: 3 + 1 columns over the same 3 door rows."""
-    return _write_pdf([
-        _matrix_page(PERSONS_P1, DOORS_P1, "Zeile 1-3 ; Spalte 1-3"),
-        _matrix_page(PERSONS_P2, DOORS_P2, "Zeile 1-3 ; Spalte 4-4"),
-    ])
+    return _write_pdf(
+        [
+            _matrix_page(PERSONS_P1, DOORS_P1, "Zeile 1-3 ; Spalte 1-3"),
+            _matrix_page(PERSONS_P2, DOORS_P2, "Zeile 1-3 ; Spalte 4-4"),
+        ]
+    )
 
 
 def _synthetic_list_page(rows=()) -> str:
@@ -174,8 +208,10 @@ def _synthetic_list_page(rows=()) -> str:
     parts = [
         _upright(40, 800, "Berechtigungen für den Transponder"),
         _upright(40, 782, "ASTA 51 Justus, Rossmeier / 02UA77F"),
-        _upright(40, 740, "Tür"), _upright(200, 740, "Raumnummer"),
-        _upright(300, 740, "Seriennummer"), _upright(420, 740, "Bereich"),
+        _upright(40, 740, "Tür"),
+        _upright(200, 740, "Raumnummer"),
+        _upright(300, 740, "Seriennummer"),
+        _upright(420, 740, "Bereich"),
     ]
     y = 722
     for door, room, serial, area in rows:
@@ -192,29 +228,42 @@ def _synthetic_list_page(rows=()) -> str:
 
 # --- Pure unit tests -----------------------------------------------------------
 
+
 class RepairSerialTests(TestCase):
     """Every case below is a real read from scan.pdf's OCR layer."""
 
-    CLEAN = ["03UAG03", "02UH4PG", "03UAHSN", "T-00061", "TC-0178",
-             "TC-00296", "011R2DX", "010BF7C"]
+    CLEAN = [
+        "03UAG03",
+        "02UH4PG",
+        "03UAHSN",
+        "T-00061",
+        "TC-0178",
+        "TC-00296",
+        "011R2DX",
+        "010BF7C",
+    ]
     TRIVIAL = {  # O/l/I lookalikes and noise-stripping only -> not suspect
-        "O2URHK6": "02URHK6", "O3TR9UX": "03TR9UX",
-        "03UAPOB": "03UAP0B", "OlUSSC2": "01USSC2",
-        "O3UCEAK": "03UCEAK", "O1X0ALB": "01X0ALB",
-        "0'l06NRT": "0106NRT", "O,IUSCHF": "01USCHF",
+        "O2URHK6": "02URHK6",
+        "O3TR9UX": "03TR9UX",
+        "03UAPOB": "03UAP0B",
+        "OlUSSC2": "01USSC2",
+        "O3UCEAK": "03UCEAK",
+        "O1X0ALB": "01X0ALB",
+        "0'l06NRT": "0106NRT",
+        "O,IUSCHF": "01USCHF",
     }
     REPAIRED = {  # needed confusion maps -> suspect
-        "03tJB9Ft": "03UB9FL",       # tJ->U, t->L
+        "03tJB9Ft": "03UB9FL",  # tJ->U, t->L
         "03tJcB91": "03UCB91",
         "03ucc4E": "03UCC4E",
         "03uAR'11": "03UAR11",
-        "O1UUTMs": "01UUTM5",        # s->5
+        "O1UUTMs": "01UUTM5",  # s->5
         "o2x6754": "02X6754",
-        "o2ttM6GX": "02UM6GX",       # tt->U
-        "02I.JKXOE": "02UKX0E",      # IJ->U
-        "01USNgR": "01USN9R",        # g->9
-        "0't0A1P9": "010A1P9",       # leading-digit enforcement
-        "OlOA¿Á¿": "010A2A2",        # symbol map
+        "o2ttM6GX": "02UM6GX",  # tt->U
+        "02I.JKXOE": "02UKX0E",  # IJ->U
+        "01USNgR": "01USN9R",  # g->9
+        "0't0A1P9": "010A1P9",  # leading-digit enforcement
+        "OlOA¿Á¿": "010A2A2",  # symbol map
         "O3TgOGN": "03T90GN",
     }
 
@@ -252,9 +301,14 @@ class RepairSerialTests(TestCase):
 
 class LookalikeTests(TestCase):
     def test_ocr_confusion_pairs_match(self):
-        for a, b in [("02UKSKC", "02UK9KC"), ("02UKDSD", "02UKD8D"),
-                     ("0104112", "010A112"), ("010A05C", "010A0SC"),
-                     ("02UHTLR", "02UH7LR"), ("02UACSU", "02UAC5U")]:
+        for a, b in [
+            ("02UKSKC", "02UK9KC"),
+            ("02UKDSD", "02UKD8D"),
+            ("0104112", "010A112"),
+            ("010A05C", "010A0SC"),
+            ("02UHTLR", "02UH7LR"),
+            ("02UACSU", "02UAC5U"),
+        ]:
             self.assertTrue(lookalike_equal(a, b), (a, b))
 
     def test_distinct_serials_do_not_match(self):
@@ -269,7 +323,7 @@ class FooterRegexTests(TestCase):
     def test_variants(self):
         cases = {
             "Zeile 1-0 ; Spalte 1-26": (1, 0, 1, 26),
-            "Zeile '1-0 ; Spalte 81-81": (1, 0, 81, 81),   # OCR quote noise
+            "Zeile '1-0 ; Spalte 81-81": (1, 0, 81, 81),  # OCR quote noise
             "Zeile 12-40; Spalte 27-80": (12, 40, 27, 80),
         }
         for text, want in cases.items():
@@ -279,6 +333,7 @@ class FooterRegexTests(TestCase):
 
 
 # --- Synthetic native-format matrix -------------------------------------------
+
 
 class SyntheticMatrixParseTests(TestCase):
     @classmethod
@@ -322,18 +377,19 @@ class SyntheticMatrixParseTests(TestCase):
     def test_marks_map_to_columns_and_rows(self):
         # Page 1: col1 rows 1+3, col2 rows 2+3, col3 rows 1+3.
         # Page 2 shows the same rows for col 4: rows 1 and 3.
-        want = {(1, 1), (3, 1), (2, 2), (1, 3), (2, 3), (3, 3),
-                (4, 1), (4, 3)}
+        want = {(1, 1), (3, 1), (2, 2), (1, 3), (2, 3), (3, 3), (4, 1), (4, 3)}
         self.assertEqual(self.result.marks, want)
 
 
 class RowSplitAndFooterEdgeTests(TestCase):
     def test_row_split_pages_do_not_duplicate_persons(self):
         # A tall matrix: same columns on both pages, rows 1 and 2 split.
-        path = _write_pdf([
-            _matrix_page(PERSONS_P1, [DOORS_P1[0]], "Zeile 1-1 ; Spalte 1-3"),
-            _matrix_page(PERSONS_P1, [DOORS_P1[1]], "Zeile 2-2 ; Spalte 1-3"),
-        ])
+        path = _write_pdf(
+            [
+                _matrix_page(PERSONS_P1, [DOORS_P1[0]], "Zeile 1-1 ; Spalte 1-3"),
+                _matrix_page(PERSONS_P1, [DOORS_P1[1]], "Zeile 2-2 ; Spalte 1-3"),
+            ]
+        )
         try:
             r = parse_matrix_pdf(path)
         finally:
@@ -346,33 +402,39 @@ class RowSplitAndFooterEdgeTests(TestCase):
         self.assertEqual(r.warnings, [])
 
     def test_footerless_pages_continue_columns_and_rows(self):
-        path = _write_pdf([
-            _matrix_page(PERSONS_P1[:2],
-                         [("Tuer Eins", "", "", [0]),
-                          ("Tuer Zwei", "", "", [1])]),
-            _matrix_page([PERSONS_P1[2]], [("Tuer Drei", "", "", [0])]),
-        ])
+        path = _write_pdf(
+            [
+                _matrix_page(
+                    PERSONS_P1[:2],
+                    [("Tuer Eins", "", "", [0]), ("Tuer Zwei", "", "", [1])],
+                ),
+                _matrix_page([PERSONS_P1[2]], [("Tuer Drei", "", "", [0])]),
+            ]
+        )
         try:
             r = parse_matrix_pdf(path)
         finally:
             os.unlink(path)
         self.assertEqual([p.column for p in r.persons], [1, 2, 3])
-        self.assertEqual([(d.row, d.name) for d in r.doors],
-                         [(1, "Tuer Eins"), (2, "Tuer Zwei"),
-                          (3, "Tuer Drei")])
+        self.assertEqual(
+            [(d.row, d.name) for d in r.doors],
+            [(1, "Tuer Eins"), (2, "Tuer Zwei"), (3, "Tuer Drei")],
+        )
         self.assertEqual(r.marks, {(1, 1), (2, 2), (3, 3)})
-        self.assertTrue(r.consistent)   # nothing to validate against
+        self.assertTrue(r.consistent)  # nothing to validate against
 
     def test_jittered_footer_fragments_are_not_doors(self):
         # Scanner OCR can split the footer over two visual lines (seen on
         # the real scan: the ';' sits ~5pt below the rest). No fragment
         # may become a door row.
-        page = "\n".join([
-            _matrix_page(PERSONS_P1[:2], [("Tuer Eins", "", "", [0])]),
-            _upright(30, 25, "Zeile 1-1"),
-            _upright(75, 20.2, ";"),
-            _upright(85, 25, "Spalte 1-2"),
-        ])
+        page = "\n".join(
+            [
+                _matrix_page(PERSONS_P1[:2], [("Tuer Eins", "", "", [0])]),
+                _upright(30, 25, "Zeile 1-1"),
+                _upright(75, 20.2, ";"),
+                _upright(85, 25, "Spalte 1-2"),
+            ]
+        )
         path = _write_pdf([page])
         try:
             r = parse_matrix_pdf(path)
@@ -398,21 +460,55 @@ class DetectFormatTests(TestCase):
 
 # --- The real scanned matrix ---------------------------------------------------
 
+
 class ScanPdfGoldenTests(TestCase):
     """Golden should-state for scan.pdf, derived by eye from the images."""
 
     GOLDEN_SERIALS = {
-        1: "T-00061", 2: "TC-0178", 3: "03UAG03", 4: "03UB9FL",
-        5: "03UAP0B", 6: "03UCB91", 7: "03UB67H", 8: "03UCC4E",
-        11: "03UAHSN", 12: "03U35MC", 15: "01UUTM5", 18: "03U02LU",
-        23: "02UH4PG", 26: "02UM6GX", 27: "02UP4BA", 28: "03THFLX",
-        29: "010A0CS", 42: "TC-00296", 48: "02UA77F", 53: "01UTRPX",
-        57: "02UKX0E", 60: "03U50U4", 61: "011ELMN", 62: "0106NRT",
-        64: "010A2A2", 71: "010BF7C", 74: "011R2DX", 77: "03T90GN",
-        78: "03THP0F", 79: "03U4345", 80: "03TN2G5",
+        1: "T-00061",
+        2: "TC-0178",
+        3: "03UAG03",
+        4: "03UB9FL",
+        5: "03UAP0B",
+        6: "03UCB91",
+        7: "03UB67H",
+        8: "03UCC4E",
+        11: "03UAHSN",
+        12: "03U35MC",
+        15: "01UUTM5",
+        18: "03U02LU",
+        23: "02UH4PG",
+        26: "02UM6GX",
+        27: "02UP4BA",
+        28: "03THFLX",
+        29: "010A0CS",
+        42: "TC-00296",
+        48: "02UA77F",
+        53: "01UTRPX",
+        57: "02UKX0E",
+        60: "03U50U4",
+        61: "011ELMN",
+        62: "0106NRT",
+        64: "010A2A2",
+        71: "010BF7C",
+        74: "011R2DX",
+        77: "03T90GN",
+        78: "03THP0F",
+        79: "03U4345",
+        80: "03TN2G5",
     }
-    GOLDEN_ASTA = {3: 1, 7: 5, 11: 9, 12: 11, 26: 27, 28: 30, 29: 31,
-                   48: 51, 60: 63, 74: 76}
+    GOLDEN_ASTA = {
+        3: 1,
+        7: 5,
+        11: 9,
+        12: 11,
+        26: 27,
+        28: 30,
+        29: 31,
+        48: 51,
+        60: 63,
+        74: 76,
+    }
 
     @classmethod
     def setUpClass(cls):
@@ -428,17 +524,17 @@ class ScanPdfGoldenTests(TestCase):
         r = self.result
         self.assertEqual(len(r.persons), 80)
         self.assertEqual(r.expected_columns, 81)  # page 3 col is not OCR'd
-        self.assertEqual(r.expected_rows, 0)      # "Zeile 1-0": empty matrix
+        self.assertEqual(r.expected_rows, 0)  # "Zeile 1-0": empty matrix
         self.assertEqual(len(r.doors), 0)
         self.assertEqual(len(r.marks), 0)
         self.assertTrue(r.ocr_scan)
         self.assertFalse(r.consistent)
 
     def test_missing_column_is_reported(self):
-        self.assertTrue(any("page 3" in w and "1 column" in w
-                            for w in self.result.warnings))
-        self.assertTrue(any("81" in w and "80" in w
-                            for w in self.result.warnings))
+        self.assertTrue(
+            any("page 3" in w and "1 column" in w for w in self.result.warnings)
+        )
+        self.assertTrue(any("81" in w and "80" in w for w in self.result.warnings))
 
     def test_all_serials_repair_to_valid(self):
         for p in self.result.persons:
@@ -464,6 +560,7 @@ class ScanPdfGoldenTests(TestCase):
 
 # --- Import pipeline -----------------------------------------------------------
 
+
 class MatrixImportTests(TestCase):
     """Import semantics: fill gaps, correct scan serials, never clobber."""
 
@@ -472,7 +569,8 @@ class MatrixImportTests(TestCase):
             self.skipTest("scan.pdf not present")
         # State a couple of list printouts would have established.
         self.named = Transponder.objects.create(
-            serial="03UAHSN", person_name="StudiTUM, Student")
+            serial="03UAHSN", person_name="StudiTUM, Student"
+        )
         self.lock = Lock.objects.create(serial="00G4LTS", door_name="Tür X")
         self.named.locks.add(self.lock)
         for s in ("02UK9KC", "010A112", "010A0SC", "02UKD8D"):
@@ -497,10 +595,8 @@ class MatrixImportTests(TestCase):
         # Wrong serials never entered the table; the corrected ones gained
         # their ASTA numbers.
         self.assertFalse(Transponder.objects.filter(serial="02UKSKC").exists())
-        self.assertEqual(
-            Transponder.objects.get(serial="02UK9KC").asta_number, 25)
-        self.assertEqual(
-            Transponder.objects.get(serial="010A0SC").asta_number, 67)
+        self.assertEqual(Transponder.objects.get(serial="02UK9KC").asta_number, 25)
+        self.assertEqual(Transponder.objects.get(serial="010A0SC").asta_number, 67)
 
         # Fill, don't overwrite: the list-import name stays, ASTA arrives.
         tp = Transponder.objects.get(serial="03UAHSN")
@@ -526,8 +622,10 @@ class ListFormatEndToEndTests(TestCase):
     """The pre-existing list-format path, now routed through the format
     dispatcher, must keep working end to end."""
 
-    ROWS = [("5532 Eingang Studitum", "0.002", "07XYZ01", "West"),
-            ("5532 Bandraum U 20", "U20", "07XYZ02", "")]
+    ROWS = [
+        ("5532 Eingang Studitum", "0.002", "07XYZ01", "West"),
+        ("5532 Bandraum U 20", "U20", "07XYZ02", ""),
+    ]
 
     def test_import_list_pdf(self):
         path = _synthetic_list_page(self.ROWS)
@@ -544,8 +642,8 @@ class ListFormatEndToEndTests(TestCase):
         tp = Transponder.objects.get(serial="02UA77F")
         self.assertEqual(tp.asta_number, 51)
         self.assertEqual(
-            set(tp.locks.values_list("serial", flat=True)),
-            {"07XYZ01", "07XYZ02"})
+            set(tp.locks.values_list("serial", flat=True)), {"07XYZ01", "07XYZ02"}
+        )
         self.assertEqual(Lock.objects.get(serial="07XYZ01").area, "West")
 
     def test_upload_endpoint_accepts_list_pdf(self):
@@ -561,9 +659,14 @@ class ListFormatEndToEndTests(TestCase):
 
 class InvalidSerialSkipTests(TestCase):
     def test_unreadable_serial_is_skipped_and_reported(self):
-        path = _write_pdf([_matrix_page(
-            [("K1", "03UAG03"), ("Someone", "######"), ("K3", "02UH4PG")],
-            footer="Zeile 1-0 ; Spalte 1-3")])
+        path = _write_pdf(
+            [
+                _matrix_page(
+                    [("K1", "03UAG03"), ("Someone", "######"), ("K3", "02UH4PG")],
+                    footer="Zeile 1-0 ; Spalte 1-3",
+                )
+            ]
+        )
         try:
             r = services.import_pdf(path, "m.pdf")
         finally:
@@ -573,7 +676,8 @@ class InvalidSerialSkipTests(TestCase):
         self.assertTrue(any("unreadable serial" in w for w in r["warnings"]))
         self.assertEqual(
             set(Transponder.objects.values_list("serial", flat=True)),
-            {"03UAG03", "02UH4PG"})
+            {"03UAG03", "02UH4PG"},
+        )
 
 
 class CorrectionOrderingTests(TestCase):
@@ -584,9 +688,14 @@ class CorrectionOrderingTests(TestCase):
         Transponder.objects.create(serial="02UH4PG", person_name="Owner")
         # Column 1 carries lowercase noise so the file counts as OCR'd;
         # column 2 lookalike-matches 02UH4PG (G↔6); column 3 IS 02UH4PG.
-        path = _write_pdf([_matrix_page(
-            [("K1", "03ucc4E"), ("K2", "02UH4P6"), ("K3", "02UH4PG")],
-            footer="Zeile 1-0 ; Spalte 1-3")])
+        path = _write_pdf(
+            [
+                _matrix_page(
+                    [("K1", "03ucc4E"), ("K2", "02UH4P6"), ("K3", "02UH4PG")],
+                    footer="Zeile 1-0 ; Spalte 1-3",
+                )
+            ]
+        )
         try:
             r = services.import_pdf(path, "m.pdf")
         finally:
@@ -595,9 +704,9 @@ class CorrectionOrderingTests(TestCase):
         self.assertEqual(r["corrected"], [])
         self.assertEqual(
             set(Transponder.objects.values_list("serial", flat=True)),
-            {"02UH4PG", "02UH4P6", "03UCC4E"})
-        self.assertEqual(
-            Transponder.objects.get(serial="02UH4PG").person_name, "Owner")
+            {"02UH4PG", "02UH4P6", "03UCC4E"},
+        )
+        self.assertEqual(Transponder.objects.get(serial="02UH4PG").person_name, "Owner")
 
 
 class SyntheticMatrixImportTests(TestCase):
@@ -609,7 +718,8 @@ class SyntheticMatrixImportTests(TestCase):
 
     def test_doors_and_marks_become_locks_and_grants(self):
         existing = Lock.objects.create(
-            serial="07XYZ01", door_name="5532 Eingang Studitum")
+            serial="07XYZ01", door_name="5532 Eingang Studitum"
+        )
         r = services.import_pdf(self.path, "matrix.pdf")
         self.assertEqual(r["format"], "matrix")
         self.assertEqual(r["created"], 4)
@@ -622,25 +732,29 @@ class SyntheticMatrixImportTests(TestCase):
         self.assertEqual(anna.person_name, "Muster, Anna")
         self.assertEqual(
             set(anna.locks.values_list("door_name", flat=True)),
-            {"5532 Eingang Studitum", "5532 Bandraum U 20"})
+            {"5532 Eingang Studitum", "5532 Bandraum U 20"},
+        )
         self.assertIn(existing, anna.locks.all())
 
         flo = Transponder.objects.get(serial="03U4345")
         self.assertEqual(
             set(flo.locks.values_list("door_name", flat=True)),
-            {"5532 Eingang Studitum", "5532 Bandraum U 20"})
+            {"5532 Eingang Studitum", "5532 Bandraum U 20"},
+        )
 
         besprechung = Lock.objects.get(door_name="5532 AStA-Besprechungsraum")
         self.assertTrue(besprechung.serial.startswith("MX:"))
         self.assertEqual(besprechung.room_number, "1.105")
         self.assertEqual(
-            set(besprechung.transponders.values_list("serial", flat=True)),
-            {"02UH4PG"})
+            set(besprechung.transponders.values_list("serial", flat=True)), {"02UH4PG"}
+        )
 
     def test_reimport_is_idempotent(self):
         services.import_pdf(self.path, "matrix.pdf")
-        locks, grants = (Lock.objects.count(),
-                         Transponder.locks.through.objects.count())
+        locks, grants = (
+            Lock.objects.count(),
+            Transponder.locks.through.objects.count(),
+        )
         services.import_pdf(self.path, "matrix.pdf")
         self.assertEqual(Lock.objects.count(), locks)
         self.assertEqual(Transponder.locks.through.objects.count(), grants)
@@ -657,6 +771,7 @@ class CellClassifierTests(TestCase):
         # Cells are greyscale as the parser sees them: dark ink (0) on a
         # white (255) background.
         from PIL import Image, ImageDraw
+
         img = Image.new("L", (self.SIZE, self.SIZE), 255)
         draw_fn(ImageDraw.Draw(img))
         return img
@@ -664,19 +779,19 @@ class CellClassifierTests(TestCase):
     def _classify(self, draw_fn):
         return ocr._classify_cell(self._cell(draw_fn), (0, 0, self.SIZE, self.SIZE))
 
-    GREY = 110   # hatch prints as mid-grey: darker than the ink cutoff
-                 # (128) so it registers as structure, lighter than the
-                 # solid-stroke cutoff (64) so it is never a cross.
+    GREY = 110  # hatch prints as mid-grey: darker than the ink cutoff
+    # (128) so it registers as structure, lighter than the
+    # solid-stroke cutoff (64) so it is never a cross.
 
     def _hatch(self, dr):
         for off in range(-self.SIZE, self.SIZE, 5):
-            dr.line([off, 0, self.SIZE + off, self.SIZE],
-                    fill=self.GREY, width=2)
+            dr.line([off, 0, self.SIZE + off, self.SIZE], fill=self.GREY, width=2)
 
     def test_bold_cross_is_x(self):
         def d(dr):
             dr.line([12, 12, 56, 56], fill=0, width=8)
             dr.line([56, 12, 12, 56], fill=0, width=8)
+
         self.assertEqual(self._classify(d), "x")
 
     def test_thin_cross_is_x(self):
@@ -685,6 +800,7 @@ class CellClassifierTests(TestCase):
         def d(dr):
             dr.line([14, 14, 54, 54], fill=0, width=4)
             dr.line([54, 14, 14, 54], fill=0, width=4)
+
         self.assertEqual(self._classify(d), "x")
 
     def test_cross_over_hatch_is_x(self):
@@ -692,6 +808,7 @@ class CellClassifierTests(TestCase):
             self._hatch(dr)
             dr.line([12, 12, 56, 56], fill=0, width=8)
             dr.line([56, 12, 12, 56], fill=0, width=8)
+
         self.assertEqual(self._classify(d), "x")
 
     def test_uniform_hatch_is_not_x(self):
@@ -702,9 +819,9 @@ class CellClassifierTests(TestCase):
         # band fakes centre + diagonal, but has no solid stroke.
         def d(dr):
             for off in range(-self.SIZE, self.SIZE, 3):
-                dr.line([off, 0, self.SIZE + off, self.SIZE],
-                        fill=self.GREY, width=2)
-            dr.line([20, 8, 60, 48], fill=90, width=4)   # darker band, still grey
+                dr.line([off, 0, self.SIZE + off, self.SIZE], fill=self.GREY, width=2)
+            dr.line([20, 8, 60, 48], fill=90, width=4)  # darker band, still grey
+
         self.assertEqual(self._classify(d), "hatch")
 
     def test_thin_cross_over_hatch_still_solid(self):
@@ -714,6 +831,7 @@ class CellClassifierTests(TestCase):
             self._hatch(dr)
             dr.line([14, 14, 54, 54], fill=0, width=5)
             dr.line([54, 14, 14, 54], fill=0, width=5)
+
         self.assertEqual(self._classify(d), "x")
 
     def test_empty_is_empty(self):
@@ -725,6 +843,7 @@ class CellClassifierTests(TestCase):
         def d(dr):
             dr.line([12, 12, 56, 56], fill=185, width=6)
             dr.line([56, 12, 12, 56], fill=185, width=6)
+
         self.assertEqual(self._classify(d), "faint")
 
     def test_corner_triangle_without_cross_is_not_x(self):
@@ -732,6 +851,7 @@ class CellClassifierTests(TestCase):
         # triangle but no cross — it must not count as an authorization.
         def d(dr):
             dr.polygon([(9, 9), (34, 9), (9, 34)], fill=0)
+
         self.assertNotEqual(self._classify(d), "x")
 
     def test_triangle_plus_cross_is_x(self):
@@ -740,6 +860,7 @@ class CellClassifierTests(TestCase):
             dr.polygon([(9, 9), (30, 9), (9, 30)], fill=0)
             dr.line([12, 12, 56, 56], fill=0, width=7)
             dr.line([56, 12, 12, 56], fill=0, width=7)
+
         self.assertEqual(self._classify(d), "x")
 
 
@@ -782,22 +903,22 @@ class DoorNameMatchingTests(TestCase):
         only_1og = [Lock.objects.get(serial="L3")]  # 5532 Herd 1.OG
         # Same door, OCR-garbled letters -> matches.
         self.assertEqual(
-            services.match_lock_by_name("5532 Herd 1.OG", only_1og), only_1og[0])
+            services.match_lock_by_name("5532 Herd 1.OG", only_1og), only_1og[0]
+        )
         # Different floor -> must not match (would corrupt Herd 1.OG).
+        self.assertIsNone(services.match_lock_by_name("5532 Herd 4.OG", only_1og))
         self.assertIsNone(
-            services.match_lock_by_name("5532 Herd 4.OG", only_1og))
-        self.assertIsNone(
-            services.match_lock_by_name("5532 Kuchenschrank 5.OG",
-                                        [Lock.objects.get(serial="L2")]))
+            services.match_lock_by_name(
+                "5532 Kuchenschrank 5.OG", [Lock.objects.get(serial="L2")]
+            )
+        )
 
     def test_orientation_difference_blocks_fuzzy_merge(self):
         # Ost vs West is one-two edits apart but a different door; it must
         # never merge, even as the only near-twin present.
         ost = [Lock.objects.create(serial="LW", door_name="Raum 0321 Ost")]
-        self.assertEqual(
-            services.match_lock_by_name("Raum 0321 Ost", ost), ost[0])
-        self.assertIsNone(
-            services.match_lock_by_name("Raum 0321 West", ost))
+        self.assertEqual(services.match_lock_by_name("Raum 0321 Ost", ost), ost[0])
+        self.assertIsNone(services.match_lock_by_name("Raum 0321 West", ost))
         # Abbreviated O/W, too.
         o = [Lock.objects.create(serial="LO", door_name="Raum 201 O")]
         self.assertIsNone(services.match_lock_by_name("Raum 201 W", o))
@@ -818,19 +939,19 @@ class LockLabelTests(TestCase):
         # room '12' is a substring of 'Labor 123' but not a token -> keep it.
         self.assertEqual(
             Lock(serial="S1", door_name="Labor 123", room_number="12").label,
-            "Labor 123 (12)")
+            "Labor 123 (12)",
+        )
         # exact room token already in the name -> not duplicated.
         self.assertEqual(
-            Lock(serial="S2", door_name="Labor 12", room_number="12").label,
-            "Labor 12")
+            Lock(serial="S2", door_name="Labor 12", room_number="12").label, "Labor 12"
+        )
         self.assertEqual(
-            Lock(serial="S3", door_name="Labor", room_number="12").label,
-            "Labor (12)")
+            Lock(serial="S3", door_name="Labor", room_number="12").label, "Labor (12)"
+        )
 
     def test_blank_door_name_has_no_dangling_room(self):
         # No leading-space, door-less ' (12)' label; fall back to the serial.
-        self.assertEqual(
-            Lock(serial="S4", door_name="", room_number="12").label, "S4")
+        self.assertEqual(Lock(serial="S4", door_name="", room_number="12").label, "S4")
 
 
 class MatrixPlannedDedupTests(TestCase):
@@ -838,9 +959,17 @@ class MatrixPlannedDedupTests(TestCase):
 
     def _matrix(self, serial, door_name, state):
         res = MatrixResult()
-        res.persons.append(MatrixPerson(
-            column=1, serial=serial, raw_serial=serial, serial_valid=True,
-            serial_suspect=False, asta_number=None, person_name=""))
+        res.persons.append(
+            MatrixPerson(
+                column=1,
+                serial=serial,
+                raw_serial=serial,
+                serial_valid=True,
+                serial_suspect=False,
+                asta_number=None,
+                person_name="",
+            )
+        )
         res.doors.append(MatrixDoor(row=1, name=door_name))
         res.marks.add((1, 1))
         res.mark_states[(1, 1)] = state
@@ -849,9 +978,10 @@ class MatrixPlannedDedupTests(TestCase):
     def test_planned_skipped_when_lock_already_active(self):
         lk = Lock.objects.create(serial="MX:D1", door_name="Raum 1")
         tp = Transponder.objects.create(serial="AAA0001")
-        tp.locks.add(lk)                       # active from a prior import
-        services._import_matrix(self._matrix("AAA0001", "Raum 1", "planned"),
-                                "later.pdf")
+        tp.locks.add(lk)  # active from a prior import
+        services._import_matrix(
+            self._matrix("AAA0001", "Raum 1", "planned"), "later.pdf"
+        )
         tp.refresh_from_db()
         self.assertIn(lk, tp.locks.all())
         self.assertNotIn(lk, tp.planned_locks.all())
@@ -860,9 +990,10 @@ class MatrixPlannedDedupTests(TestCase):
     def test_activation_clears_prior_planned(self):
         lk = Lock.objects.create(serial="MX:D2", door_name="Raum 2")
         tp = Transponder.objects.create(serial="AAA0002")
-        tp.planned_locks.add(lk)               # pending from a prior import
-        services._import_matrix(self._matrix("AAA0002", "Raum 2", "active"),
-                                "later.pdf")
+        tp.planned_locks.add(lk)  # pending from a prior import
+        services._import_matrix(
+            self._matrix("AAA0002", "Raum 2", "active"), "later.pdf"
+        )
         tp.refresh_from_db()
         self.assertIn(lk, tp.locks.all())
         self.assertNotIn(lk, tp.planned_locks.all())
@@ -873,12 +1004,27 @@ class ScreenshotOcrTests(TestCase):
     """Golden should-state for the image path, verified against an
     independent visual transcription of screenshot.png."""
 
-    GOLDEN_SERIALS = {   # column -> serial (eye-verified)
-        1: "03UCB91", 2: "02UH7LR", 3: "010A112", 4: "02UH4PG",
-        7: "TC-00042", 10: "02UP4BA", 11: "03U50U4", 13: "T-00095",
-        14: "010A0SC", 17: "02UA77F", 22: "02UL6P5", 26: "03TN2G5",
-        29: "03UAHSN", 31: "02UM6GX", 36: "03TRUH3", 38: "01XEUPT",
-        42: "01X0ALB", 47: "010BF7C", 51: "02X9787", 53: "01X15G4",
+    GOLDEN_SERIALS = {  # column -> serial (eye-verified)
+        1: "03UCB91",
+        2: "02UH7LR",
+        3: "010A112",
+        4: "02UH4PG",
+        7: "TC-00042",
+        10: "02UP4BA",
+        11: "03U50U4",
+        13: "T-00095",
+        14: "010A0SC",
+        17: "02UA77F",
+        22: "02UL6P5",
+        26: "03TN2G5",
+        29: "03UAHSN",
+        31: "02UM6GX",
+        36: "03TRUH3",
+        38: "01XEUPT",
+        42: "01X0ALB",
+        47: "010BF7C",
+        51: "02X9787",
+        53: "01X15G4",
     }
 
     @classmethod
@@ -896,8 +1042,7 @@ class ScreenshotOcrTests(TestCase):
         self.assertEqual(len(r.marks), 800)
 
     def test_faint_marks_are_reported_not_counted(self):
-        self.assertTrue(any("faint/partial mark" in w
-                            for w in self.result.warnings))
+        self.assertTrue(any("faint/partial mark" in w for w in self.result.warnings))
 
     def test_golden_serials(self):
         by_col = {p.column: p for p in self.result.persons}
@@ -908,8 +1053,9 @@ class ScreenshotOcrTests(TestCase):
         names = [d.name for d in self.result.doors]
         self.assertIn("5532 Bandraum U 20", names)
         by_name = {d.name: d for d in self.result.doors}
-        d = by_name.get("5532 AStA-Besprechunasraum") \
-            or by_name.get("5532 AStA-Besprechungsraum")
+        d = by_name.get("5532 AStA-Besprechunasraum") or by_name.get(
+            "5532 AStA-Besprechungsraum"
+        )
         self.assertIsNotNone(d)
         self.assertEqual(d.room_number, "1.105")
         self.assertEqual(d.floor, "1.OG")
@@ -938,8 +1084,7 @@ class ScreenshotImportTests(TestCase):
         cls.parsed = ocr.parse_matrix_image(SCREENSHOT)
 
     def test_import_applies_marks_and_matches_doors(self):
-        Lock.objects.create(serial="07XYZ09",
-                            door_name="5532 AStA-Besprechungsraum")
+        Lock.objects.create(serial="07XYZ09", door_name="5532 AStA-Besprechungsraum")
         for s in ("02UEE9D", "03TR9UX", "00XGTD5", "010BF7C"):
             Transponder.objects.create(serial=s)
         r = services._import_matrix(self.parsed, "screenshot.png")
@@ -952,18 +1097,26 @@ class ScreenshotImportTests(TestCase):
         self.assertFalse(Transponder.objects.filter(serial="02UEESD").exists())
         # The seeded lock was matched by name (no MX: duplicate).
         self.assertEqual(
-            Lock.objects.filter(door_name__icontains="Besprechun").count(), 1)
-        self.assertGreater(
-            Lock.objects.get(serial="07XYZ09").transponders.count(), 5)
+            Lock.objects.filter(door_name__icontains="Besprechun").count(), 1
+        )
+        self.assertGreater(Lock.objects.get(serial="07XYZ09").transponders.count(), 5)
 
     def test_reimport_is_idempotent(self):
         services._import_matrix(self.parsed, "screenshot.png")
-        counts = (Transponder.objects.count(), Lock.objects.count(),
-                  Transponder.locks.through.objects.count())
+        counts = (
+            Transponder.objects.count(),
+            Lock.objects.count(),
+            Transponder.locks.through.objects.count(),
+        )
         services._import_matrix(self.parsed, "screenshot.png")
         self.assertEqual(
-            (Transponder.objects.count(), Lock.objects.count(),
-             Transponder.locks.through.objects.count()), counts)
+            (
+                Transponder.objects.count(),
+                Lock.objects.count(),
+                Transponder.locks.through.objects.count(),
+            ),
+            counts,
+        )
 
 
 class UploadAndCommandTests(TestCase):
@@ -977,12 +1130,16 @@ class UploadAndCommandTests(TestCase):
 
     def test_loadpdfs_handles_matrix(self):
         tmpdir = tempfile.mkdtemp()
-        path = os.path.join(tmpdir, "grid.pdf")   # name must not say 'matrix'
+        path = os.path.join(tmpdir, "grid.pdf")  # name must not say 'matrix'
         with open(path, "wb") as fh:
-            fh.write(_pdf_bytes([
-                _matrix_page(PERSONS_P1, DOORS_P1, "Zeile 1-3 ; Spalte 1-3"),
-                _matrix_page(PERSONS_P2, DOORS_P2, "Zeile 1-3 ; Spalte 4-4"),
-            ]))
+            fh.write(
+                _pdf_bytes(
+                    [
+                        _matrix_page(PERSONS_P1, DOORS_P1, "Zeile 1-3 ; Spalte 1-3"),
+                        _matrix_page(PERSONS_P2, DOORS_P2, "Zeile 1-3 ; Spalte 4-4"),
+                    ]
+                )
+            )
         out = io.StringIO()
         try:
             call_command("loadpdfs", tmpdir, stdout=out)
@@ -995,6 +1152,7 @@ class UploadAndCommandTests(TestCase):
 
 
 # --- Real to_check/ fixtures: list extracts + native-PDF matrix -------------
+
 
 @unittest.skipUnless(HAVE_TOCHECK, "to_check/ fixtures not present")
 class ListExtractGoldenTests(TestCase):
@@ -1029,8 +1187,12 @@ class ListExtractGoldenTests(TestCase):
         services.import_pdf(os.path.join(TOCHECK, "010a0cs.pdf"), "x.pdf")
         tp = Transponder.objects.get(serial="010A0CS")
         names = set(tp.locks.values_list("door_name", flat=True))
-        for d in ("Raum 308 Dusche", "Mensa ASTA Eingang",
-                  "Bihinderten Eing. 010 Ost", "Raum - 103 Lager"):
+        for d in (
+            "Raum 308 Dusche",
+            "Mensa ASTA Eingang",
+            "Bihinderten Eing. 010 Ost",
+            "Raum - 103 Lager",
+        ):
             self.assertIn(d, names)
 
 
@@ -1079,11 +1241,18 @@ class NativeMatrixTests(TestCase):
 
     def test_allgemein_inheritance(self):
         # The 10 base doors every AStA key should open (from the mail).
-        allg10 = {"Mensa ASTA Eingang", "Mensa ASTA Eingang Links",
-                  "Mensa ASTA Notausgang", "Mensa Gitterbox 2 Mülllager",
-                  "Bihinderten Eing. 010 Ost", "Haupteingang 008 West",
-                  "Raum 104 Stud. Arbeit", "Raum 308 Dusche",
-                  "Eingang -111 ( Keller )", "Raum - 103 Lager"}
+        allg10 = {
+            "Mensa ASTA Eingang",
+            "Mensa ASTA Eingang Links",
+            "Mensa ASTA Notausgang",
+            "Mensa Gitterbox 2 Mülllager",
+            "Bihinderten Eing. 010 Ost",
+            "Haupteingang 008 West",
+            "Raum 104 Stud. Arbeit",
+            "Raum 308 Dusche",
+            "Eingang -111 ( Keller )",
+            "Raum - 103 Lager",
+        }
         door_name = {d.row: d.name for d in self.r.doors}
 
         def coverage(col):
@@ -1092,10 +1261,12 @@ class NativeMatrixTests(TestCase):
 
         # A plain Allgemein member opens all 10; a Technik combo key does not
         # (the finding that the specialised keys lack the Allgemein base).
-        plain = next(p.column for p in self.r.persons
-                     if p.person_name == "AStA Allgemein 01")
-        technik = next(p.column for p in self.r.persons
-                       if p.person_name == "AStA Technik 04")
+        plain = next(
+            p.column for p in self.r.persons if p.person_name == "AStA Allgemein 01"
+        )
+        technik = next(
+            p.column for p in self.r.persons if p.person_name == "AStA Technik 04"
+        )
         self.assertEqual(coverage(plain), 10)
         self.assertLess(coverage(technik), 10)
 
@@ -1119,12 +1290,12 @@ class NativeMatrixImportTests(TestCase):
         planned = Transponder.planned_locks.through.objects.count()
         self.assertGreater(active + planned, 1000)
         self.assertGreater(active, 0)
-        self.assertGreater(planned, active)   # the plan is mostly pending
+        self.assertGreater(planned, active)  # the plan is mostly pending
         # Marks now split three ways: active + planned + hollow (pending removal).
         self.assertEqual(
-            r["active_marks"] + r["planned_marks"] + r["removed_marks"],
-            r["marks"])
-        self.assertGreater(r["removed_marks"], 0)   # Lukas.pdf has hollow crosses
+            r["active_marks"] + r["planned_marks"] + r["removed_marks"], r["marks"]
+        )
+        self.assertGreater(r["removed_marks"], 0)  # Lukas.pdf has hollow crosses
         # Hollow marks land in removed_locks (fewer rows than marks: the 28
         # truncated-serial columns are skipped, same as for active/planned).
         removed = Transponder.removed_locks.through.objects.count()
@@ -1137,10 +1308,9 @@ class NativeMatrixImportTests(TestCase):
         # The Muster template's authorizations are all thin × (the group is
         # being set up), so every one lands in planned_locks, none active.
         services.import_pdf(os.path.join(TOCHECK, "Lukas.pdf"), "Lukas.pdf")
-        muster = Transponder.objects.filter(
-            person_name="A Muster Allgem").first()
+        muster = Transponder.objects.filter(person_name="A Muster Allgem").first()
         self.assertIsNotNone(muster)
-        self.assertEqual(muster.locks.count(), 0)          # nothing active
+        self.assertEqual(muster.locks.count(), 0)  # nothing active
         # 53 planned marks -> 52 distinct locks (one door name repeats).
         self.assertGreaterEqual(muster.planned_locks.count(), 52)
         self.assertTrue(muster.has_planned)
@@ -1165,8 +1335,9 @@ class MarkStateTests(TestCase):
         self.assertGreater(len(self.r.marks) - n_active, n_active)
 
     def test_template_column_all_planned(self):
-        col = next(p.column for p in self.r.persons
-                   if p.person_name == "A Muster Allgem")
+        col = next(
+            p.column for p in self.r.persons if p.person_name == "A Muster Allgem"
+        )
         states = [s for (c, _r), s in self.r.mark_states.items() if c == col]
         self.assertEqual(len(states), 53)
         self.assertTrue(all(s == "planned" for s in states))
@@ -1185,8 +1356,11 @@ def _csv_marks(path):
     txt = txt.replace("\r\n", "\n").replace("\r", "\n")
     rows = list(_csv.reader(io.StringIO(txt), delimiter=";"))
     ncol = max(len(r) for r in rows)
-    serials = {c: rows[5][c].strip() for c in range(8, ncol)
-               if c < len(rows[5]) and rows[5][c].strip()}
+    serials = {
+        c: rows[5][c].strip()
+        for c in range(8, ncol)
+        if c < len(rows[5]) and rows[5][c].strip()
+    }
     marks, doors = set(), set()
     for ri in range(6, len(rows)):
         r = rows[ri]
@@ -1252,10 +1426,13 @@ class Asta2026CsvOracleTests(TestCase):
 
     def _parser_marks(self):
         import re
+
         ser = {p.column: p.serial for p in self.r.persons}
         name = {d.row: d.name for d in self.r.doors}
-        return {(ser[c], re.sub(r"\s+", " ", name[rw].strip()).casefold())
-                for (c, rw) in self.r.marks}
+        return {
+            (ser[c], re.sub(r"\s+", " ", name[rw].strip()).casefold())
+            for (c, rw) in self.r.marks
+        }
 
     def test_columns_and_serials_match_csv(self):
         self.assertEqual({p.serial for p in self.r.persons}, self.csv_serials)
@@ -1265,8 +1442,8 @@ class Asta2026CsvOracleTests(TestCase):
         # authorizations exactly: no missed marks, no spurious ones.
         par = self._parser_marks()
         self.assertEqual(len(self.csv_marks), 1553)
-        self.assertEqual(par - self.csv_marks, set())   # no false positives
-        self.assertEqual(self.csv_marks - par, set())   # no false negatives
+        self.assertEqual(par - self.csv_marks, set())  # no false positives
+        self.assertEqual(self.csv_marks - par, set())  # no false negatives
 
 
 @unittest.skipUnless(HAVE_ASTA, "ASTA-2026.pdf not present")
@@ -1280,11 +1457,14 @@ class Asta2026ImportTests(TestCase):
         # never merge into a near-twin (Ost/West) of the same import.
         self.assertEqual(Lock.objects.count(), 208)
         self.assertEqual(Transponder.objects.count(), 84)
-        for a, b in (("Raum 201 O", "Raum 201 W"),
-                     ("Flur Bau 3 z. Bau 8 Ost", "Flur Bau 3 z. Bau 8 West")):
+        for a, b in (
+            ("Raum 201 O", "Raum 201 W"),
+            ("Flur Bau 3 z. Bau 8 Ost", "Flur Bau 3 z. Bau 8 West"),
+        ):
             self.assertNotEqual(
                 Lock.objects.get(door_name=a).serial,
-                Lock.objects.get(door_name=b).serial)
+                Lock.objects.get(door_name=b).serial,
+            )
 
 
 @unittest.skipUnless(HAVE_ASTA_CSV, "ASTA-2026.csv not present")
@@ -1293,6 +1473,7 @@ class Asta2026CombinedImportTests(TestCase):
 
     def test_combined_import(self):
         from access.csv_import import import_asta_csv
+
         r = import_asta_csv(ASTA_CSV, ASTA_PDF, "ASTA-2026.csv")
         self.assertEqual(r["transponders"], 84)
         # 209 real lock serials -> two doors share a name but stay distinct.
@@ -1305,17 +1486,171 @@ class Asta2026CombinedImportTests(TestCase):
         self.assertFalse(Lock.objects.filter(serial__startswith="MX:").exists())
         self.assertTrue(Lock.objects.filter(serial__startswith="DC-").exists())
         # Full door names, not the PDF's truncation.
-        self.assertTrue(Lock.objects.filter(
-            door_name="Raum -1805 Wasserbau und Wasserwirtschaft").exists())
+        self.assertTrue(
+            Lock.objects.filter(
+                door_name="Raum -1805 Wasserbau und Wasserwirtschaft"
+            ).exists()
+        )
         # The two same-named locks are kept apart by serial.
-        self.assertEqual(Lock.objects.filter(
-            door_name="Raum -1342 Architekturmuseum").count(), 2)
+        self.assertEqual(
+            Lock.objects.filter(door_name="Raum -1342 Architekturmuseum").count(), 2
+        )
 
     def test_wipe_is_required(self):
         from django.core.management import call_command
         from django.core.management.base import CommandError
+
         with self.assertRaises(CommandError):
             call_command("import_asta", ASTA_CSV, ASTA_PDF)
+
+
+class GroupLabelTests(TestCase):
+    def test_custom_code_normalization_uppercases_but_rejects_punctuation(self):
+        self.assertEqual(normalize_export_code(" ws "), "WS")
+        self.assertEqual(normalize_export_code("ök"), "OK")
+        with self.assertRaises(ValidationError):
+            normalize_export_code("L-")
+
+    def test_code_generation_uses_shortest_available_prefix(self):
+        self.assertEqual(derive_export_code("AStA Lager", set()), "L")
+        self.assertEqual(derive_export_code("AStA Lager", {"L"}), "LA")
+        self.assertEqual(derive_export_code("Ökologie", set()), "O")
+
+    def test_code_generation_rejects_exhausted_prefixes(self):
+        with self.assertRaisesMessage(ValidationError, "eigenen Export-Code"):
+            derive_export_code("Lager", {"L", "LA", "LAG", "LAGE"})
+
+    def test_model_generates_code_once_and_keeps_it_on_rename(self):
+        group = Group.objects.create(name="AStA Lager")
+        self.assertEqual(group.export_code, "L")
+        group.name = "Materiallager"
+        group.save()
+        group.refresh_from_db()
+        self.assertEqual(group.export_code, "L")
+
+    def test_existing_group_cannot_regenerate_a_cleared_code(self):
+        group = Group.objects.create(name="AStA Lager")
+        group.export_code = ""
+
+        with self.assertRaises(ValidationError):
+            group.save()
+
+        group.refresh_from_db()
+        self.assertEqual(group.export_code, "L")
+
+    def test_codes_are_normalized_and_case_insensitively_unique(self):
+        Group.objects.create(name="Lager", export_code="l")
+        duplicate = Group(name="Labor", export_code="L")
+        with self.assertRaises(ValidationError):
+            duplicate.full_clean()
+
+    def test_database_rejects_code_with_trailing_newline(self):
+        group = Group.objects.create(name="Lager", export_code="L")
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Group.objects.filter(pk=group.pk).update(export_code="A\n")
+
+    def test_setting_implicit_replaces_previous_group(self):
+        first = Group.objects.create(name="Allgemein", export_code="A")
+        second = Group.objects.create(name="Basis", export_code="B")
+        set_group_export_metadata(first, export_code="A", is_implicit=True)
+        set_group_export_metadata(second, export_code="B", is_implicit=True)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertFalse(first.is_implicit)
+        self.assertTrue(second.is_implicit)
+
+    def test_combined_label_sorts_omits_implicit_and_separates_long_codes(self):
+        base = Group.objects.create(
+            name="AStA Allgemein", export_code="A", is_implicit=True
+        )
+        lager = Group.objects.create(name="AStA Lager", export_code="LA")
+        technik = Group.objects.create(name="AStA Technik", export_code="T")
+        self.assertEqual(combined_group_label([]), "")
+        self.assertEqual(combined_group_label([base]), "AStA A")
+        self.assertEqual(combined_group_label([technik, base, lager]), "AStA LA-T")
+        self.assertEqual(combined_group_label([technik, lager]), "AStA LA-T")
+
+    def test_seed_groups_marks_new_allgemein_implicit(self):
+        call_command("seed_groups", stdout=io.StringIO())
+
+        allgemein = Group.objects.get(name="AStA Allgemein")
+        self.assertTrue(allgemein.is_implicit)
+
+    def test_seed_groups_preserves_existing_export_metadata(self):
+        allgemein = Group.objects.create(
+            name="AStA Allgemein", export_code="GEN", is_implicit=False
+        )
+
+        call_command("seed_groups", stdout=io.StringIO())
+
+        allgemein.refresh_from_db()
+        self.assertEqual(allgemein.export_code, "GEN")
+        self.assertFalse(allgemein.is_implicit)
+
+
+class DashboardGroupLabelTests(TestCase):
+    def setUp(self):
+        self.grouped = Transponder.objects.create(
+            serial="DASH-GROUPED", person_name="Gruppiert"
+        )
+        self.ungrouped = Transponder.objects.create(
+            serial="DASH-EMPTY", person_name="Ohne Gruppe"
+        )
+        base = Group.objects.create(
+            name="AStA Allgemein", export_code="A", is_implicit=True
+        )
+        lager = Group.objects.create(name="AStA Lager", export_code="L")
+        self.grouped.groups.set([lager, base])
+
+    def test_dashboard_shows_group_chip_only_for_grouped_transponders(self):
+        response = self.client.get("/")
+
+        self.assertContains(response, "AStA L", count=1)
+        self.assertContains(response, "data-group-label", count=1)
+
+    def test_dashboard_prefetches_groups_without_n_plus_one(self):
+        for index in range(3):
+            transponder = Transponder.objects.create(serial=f"DASH-{index}")
+            transponder.groups.add(Group.objects.create(name=f"Dash Group {index}"))
+
+        with self.assertNumQueries(5):
+            response = self.client.get("/")
+            self.assertEqual(response.status_code, 200)
+
+
+class TransponderListTests(TestCase):
+    def setUp(self):
+        self.tp = Transponder.objects.create(
+            serial="LIST-BASE", person_name="Listenkarte"
+        )
+
+    def test_list_shows_and_searches_combined_group_label(self):
+        base = Group.objects.create(
+            name="AStA Allgemein", export_code="A", is_implicit=True
+        )
+        lager = Group.objects.create(name="AStA Lager", export_code="L")
+        self.tp.groups.set([lager, base])
+
+        response = self.client.get("/transponders/")
+
+        self.assertContains(response, "AStA L", count=2)
+        self.assertContains(response, "Gruppe")
+        self.assertContains(response, "asta l")
+
+    def test_list_prefetches_groups_without_n_plus_one(self):
+        groups = [Group.objects.create(name=f"Group {index}") for index in range(3)]
+        for index in range(3):
+            transponder = Transponder.objects.create(serial=f"LIST-{index}")
+            transponder.groups.add(groups[index])
+
+        with self.assertNumQueries(2):
+            response = self.client.get("/transponders/")
+            self.assertEqual(response.status_code, 200)
+
+    def test_list_marks_ungrouped_rows(self):
+        response = self.client.get("/transponders/")
+        self.assertContains(response, "&mdash;", html=False)
 
 
 class PdfExportTests(TestCase):
@@ -1323,17 +1658,22 @@ class PdfExportTests(TestCase):
 
     def setUp(self):
         from access import pdf_export
+
         self.pdf_export = pdf_export
-        self.l1 = Lock.objects.create(serial="DC-1", door_name="Door A",
-                                      location="Loc1")
-        self.l2 = Lock.objects.create(serial="DC-2", door_name="Door B",
-                                      location="Loc2")
+        self.l1 = Lock.objects.create(
+            serial="DC-1", door_name="Door A", location="Loc1"
+        )
+        self.l2 = Lock.objects.create(
+            serial="DC-2", door_name="Door B", location="Loc2"
+        )
         self.a = Transponder.objects.create(
-            serial="AAA", asta_number=1, person_name="Alice")
+            serial="AAA", asta_number=1, person_name="Alice"
+        )
         self.b = Transponder.objects.create(
-            serial="BBB", asta_number=2, person_name="Bob")
-        self.a.locks.add(self.l1)              # active
-        self.a.planned_locks.add(self.l2)      # planned
+            serial="BBB", asta_number=2, person_name="Bob"
+        )
+        self.a.locks.add(self.l1)  # active
+        self.a.planned_locks.add(self.l2)  # planned
 
     def test_data_ordering_and_marks(self):
         d = self.pdf_export.build_matrix_data("all")
@@ -1344,9 +1684,11 @@ class PdfExportTests(TestCase):
 
     def test_scope_filters_marks(self):
         self.assertEqual(
-            self.pdf_export.build_matrix_data("active")["marks"], {"0-0": 2})
+            self.pdf_export.build_matrix_data("active")["marks"], {"0-0": 2}
+        )
         self.assertEqual(
-            self.pdf_export.build_matrix_data("planned")["marks"], {"0-1": 1})
+            self.pdf_export.build_matrix_data("planned")["marks"], {"0-1": 1}
+        )
 
     def test_invalid_args_rejected(self):
         with self.assertRaises(ValueError):
@@ -1366,8 +1708,7 @@ class PdfExportTests(TestCase):
     def test_command_writes_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "m.pdf")
-            call_command("exportpdf", "--size", "a4", "-o", out,
-                         stdout=io.StringIO())
+            call_command("exportpdf", "--size", "a4", "-o", out, stdout=io.StringIO())
             with open(out, "rb") as fh:
                 self.assertEqual(fh.read(4), b"%PDF")
 
@@ -1380,16 +1721,15 @@ class PdfExportTests(TestCase):
         self.assertTrue(r.getvalue().startswith(b"%PDF"))
 
     def test_diff_data_classifies_cells(self):
-        l3 = Lock.objects.create(serial="DC-3", door_name="Door C",
-                                 location="Loc3")
+        l3 = Lock.objects.create(serial="DC-3", door_name="Door C", location="Loc3")
         # Alice wants l1 (has it active) and l3 (not configured); l2 (planned)
         # is not wished.
         self.a.desired_locks.set([self.l1, l3])
         d = self.pdf_export.build_diff_data()
         self.assertEqual(d["mode"], "diff")
-        self.assertEqual(d["marks"]["0-0"], [2, 1])   # active + wished -> ok
-        self.assertEqual(d["marks"]["0-1"], [1, 0])   # planned, unwished -> remove
-        self.assertEqual(d["marks"]["0-2"], [0, 1])   # wished, absent -> add
+        self.assertEqual(d["marks"]["0-0"], [2, 1])  # active + wished -> ok
+        self.assertEqual(d["marks"]["0-1"], [1, 0])  # planned, unwished -> remove
+        self.assertEqual(d["marks"]["0-2"], [0, 1])  # wished, absent -> add
         self.assertEqual(d["counts"], {"ok": 1, "add": 1, "remove": 1})
 
     def test_seed_desired_and_overwrite(self):
@@ -1426,8 +1766,9 @@ class PdfExportTests(TestCase):
         trimmed = self.pdf_export.build_diff_data(hide_empty=True)
         self.assertIn("DC-3", [d["serial"] for d in full["doors"]])
         # DC-3 (no rights) dropped; DC-4 (hollow ×) kept alongside active/planned.
-        self.assertEqual({d["serial"] for d in trimmed["doors"]},
-                         {"DC-1", "DC-2", "DC-4"})
+        self.assertEqual(
+            {d["serial"] for d in trimmed["doors"]}, {"DC-1", "DC-2", "DC-4"}
+        )
         # dropping empty doors changes nothing about the actual diff counts
         self.assertEqual(trimmed["counts"], full["counts"])
         # every mark still points at a valid (re-indexed) row
@@ -1435,21 +1776,36 @@ class PdfExportTests(TestCase):
         for key in trimmed["marks"]:
             self.assertLessEqual(int(key.split("-")[1]), max_row)
 
-    def test_export_includes_group_names(self):
-        g = Group.objects.create(name="G1")
-        self.a.groups.add(g)
-        by = {t["serial"]: t
-              for t in self.pdf_export.build_matrix_data("all")["transponders"]}
-        self.assertEqual(by["AAA"]["groups"], ["G1"])
-        self.assertEqual(by["BBB"]["groups"], [])   # no group
-        # the diff export carries it too
-        by_diff = {t["serial"]: t
-                   for t in self.pdf_export.build_diff_data()["transponders"]}
-        self.assertEqual(by_diff["AAA"]["groups"], ["G1"])
+    def test_all_export_modes_use_flattened_group_label(self):
+        base = Group.objects.create(
+            name="AStA Allgemein", export_code="A", is_implicit=True
+        )
+        lager = Group.objects.create(name="AStA Lager", export_code="L")
+        technik = Group.objects.create(name="AStA Technik", export_code="T")
+        self.a.groups.add(technik, base, lager)
+
+        matrix = {
+            item["serial"]: item
+            for item in self.pdf_export.build_matrix_data("all")["transponders"]
+        }
+        diff = {
+            item["serial"]: item
+            for item in self.pdf_export.build_diff_data()["transponders"]
+        }
+        self.a.desired_locks.clear()
+        changes = {
+            item["serial"]: item
+            for item in self.pdf_export.build_changes_data()["changes"]
+        }
+
+        self.assertEqual(matrix["AAA"]["group"], "AStA LT")
+        self.assertEqual(diff["AAA"]["group"], "AStA LT")
+        self.assertEqual(changes["AAA"]["group"], "AStA LT")
+        self.assertEqual(matrix["BBB"]["group"], "")
+        self.assertNotIn("groups", matrix["AAA"])
 
     def test_changes_data_lists_adds_and_removes(self):
-        l3 = Lock.objects.create(serial="DC-3", door_name="Door C",
-                                 location="Loc3")
+        l3 = Lock.objects.create(serial="DC-3", door_name="Door C", location="Loc3")
         # Alice: has l1 active + l2 planned (configured); wishes l1 + l3.
         self.a.desired_locks.set([self.l1, l3])
         d = self.pdf_export.build_changes_data()
@@ -1466,25 +1822,23 @@ class PdfExportTests(TestCase):
         # Same door removed from two transponders — active on one, planned on
         # the other. Each entry must carry its own planned flag (no shared-dict
         # aliasing leaking one onto the other).
-        self.a.locks.add(self.l2)                 # Alice: l2 ACTIVE (+ l1 active)
-        self.b.locks.add(self.l1)                 # Bob has l1 active …
-        self.b.planned_locks.add(self.l2)         # … and l2 PLANNED
-        self.a.desired_locks.set([self.l1])       # Alice drops l2 (active)
-        self.b.desired_locks.set([self.l1])       # Bob drops l2 (planned)
+        self.a.locks.add(self.l2)  # Alice: l2 ACTIVE (+ l1 active)
+        self.b.locks.add(self.l1)  # Bob has l1 active …
+        self.b.planned_locks.add(self.l2)  # … and l2 PLANNED
+        self.a.desired_locks.set([self.l1])  # Alice drops l2 (active)
+        self.b.desired_locks.set([self.l1])  # Bob drops l2 (planned)
         d = self.pdf_export.build_changes_data()
         by = {e["serial"]: e for e in d["changes"]}
         a_rm = {x["serial"]: x for x in by["AAA"]["remove"]}
         b_rm = {x["serial"]: x for x in by["BBB"]["remove"]}
-        self.assertEqual(a_rm["DC-2"]["note"], "")         # Alice: active removal
+        self.assertEqual(a_rm["DC-2"]["note"], "")  # Alice: active removal
         self.assertEqual(b_rm["DC-2"]["note"], "geplant")  # Bob: pending removal
 
     def test_changes_hollow_excluded_unless_wished(self):
-        l3 = Lock.objects.create(serial="DC-3", door_name="Door C",
-                                 location="Loc3")
-        l4 = Lock.objects.create(serial="DC-4", door_name="Door D",
-                                 location="Loc4")
-        self.a.removed_locks.add(l3, l4)          # both hollow (pending removal)
-        self.a.desired_locks.set([self.l1, l4])   # want l1 (active) + l4 (a hollow)
+        l3 = Lock.objects.create(serial="DC-3", door_name="Door C", location="Loc3")
+        l4 = Lock.objects.create(serial="DC-4", door_name="Door D", location="Loc4")
+        self.a.removed_locks.add(l3, l4)  # both hollow (pending removal)
+        self.a.desired_locks.set([self.l1, l4])  # want l1 (active) + l4 (a hollow)
         d = self.pdf_export.build_changes_data()
         entry = next(e for e in d["changes"] if e["serial"] == "AAA")
         rem = [x["serial"] for x in entry["remove"]]
@@ -1495,8 +1849,9 @@ class PdfExportTests(TestCase):
         # l4: hollow but WISHED -> must be re-authorised -> shows as an add.
         self.assertIn("DC-4", add)
         # l2 (planned, unwished) is still a removal, noted "geplant".
-        self.assertEqual({x["serial"]: x["note"] for x in entry["remove"]},
-                         {"DC-2": "geplant"})
+        self.assertEqual(
+            {x["serial"]: x["note"] for x in entry["remove"]}, {"DC-2": "geplant"}
+        )
 
     def test_changes_data_empty_when_all_match(self):
         # Wish exactly equals configured (active ∪ planned) -> no changes.
@@ -1507,11 +1862,10 @@ class PdfExportTests(TestCase):
 
     @unittest.skipUnless(HAVE_TYPST, "typst binary not installed")
     def test_changes_view_and_render(self):
-        self.a.desired_locks.set([self.l1])          # -> remove l2 (planned)
-        pdf = self.pdf_export.render_pdf(
-            self.pdf_export.build_changes_data(), "a4")
+        self.a.desired_locks.set([self.l1])  # -> remove l2 (planned)
+        pdf = self.pdf_export.render_pdf(self.pdf_export.build_changes_data(), "a4")
         self.assertTrue(pdf.startswith(b"%PDF"))
-        r = self.client.get("/export.pdf?mode=changes")   # defaults to A4
+        r = self.client.get("/export.pdf?mode=changes")  # defaults to A4
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
         self.assertIn("changes", r["Content-Disposition"])
@@ -1523,24 +1877,29 @@ class SollEditingTests(TestCase):
 
     def setUp(self):
         import json
+
         self.json = json
-        self.L = [Lock.objects.create(serial=f"D{i}", door_name=f"Door {i}",
-                                      location="Bau X") for i in range(1, 6)]
+        self.L = [
+            Lock.objects.create(serial=f"D{i}", door_name=f"Door {i}", location="Bau X")
+            for i in range(1, 6)
+        ]
         self.tp = Transponder.objects.create(serial="AAA", person_name="A")
         self.g1 = Group.objects.create(name="G1")
         self.g2 = Group.objects.create(name="G2")
-        self.g1.doors.set(self.L[:3])          # D1 D2 D3
-        self.g2.doors.set(self.L[2:5])         # D3 D4 D5  (D3 shared)
+        self.g1.doors.set(self.L[:3])  # D1 D2 D3
+        self.g2.doors.set(self.L[2:5])  # D3 D4 D5  (D3 shared)
 
     def _post(self, url, body):
-        return self.client.post(url, data=self.json.dumps(body),
-                                content_type="application/json")
+        return self.client.post(
+            url, data=self.json.dumps(body), content_type="application/json"
+        )
 
     def test_assign_unassign_preserves_overlap(self):
         from access import soll
+
         soll.assign_group(self.tp, self.g1)
         soll.assign_group(self.tp, self.g2)
-        self.assertEqual(self.tp.desired_locks.count(), 5)   # D1..D5
+        self.assertEqual(self.tp.desired_locks.count(), 5)  # D1..D5
         soll.unassign_group(self.tp, self.g1)
         got = set(self.tp.desired_locks.values_list("serial", flat=True))
         # D3 stays (still in G2); D1,D2 gone.
@@ -1549,48 +1908,148 @@ class SollEditingTests(TestCase):
 
     def test_group_door_edit_propagates_to_members(self):
         from access import soll
-        soll.assign_group(self.tp, self.g1)          # desired D1 D2 D3
+
+        soll.assign_group(self.tp, self.g1)  # desired D1 D2 D3
         soll.set_group_doors(self.g2, [self.L[4]], True)  # add D5 to G2
-        soll.assign_group(self.tp, self.g2)          # now member of G2 too
+        soll.assign_group(self.tp, self.g2)  # now member of G2 too
         self.assertIn("D5", self.tp.desired_locks.values_list("serial", flat=True))
         # Removing D3 from G1 keeps it (still in G2, which tp also has).
         soll.set_group_doors(self.g1, [self.L[2]], False)
         self.assertIn("D3", self.tp.desired_locks.values_list("serial", flat=True))
 
     def test_toggle_endpoint_batch(self):
-        self._post("/soll/toggle/", {"ops": [
-            {"kind": "group", "id": self.g1.id, "on": False, "locks": ["D1", "D2"]},
-            {"kind": "tp", "id": "AAA", "on": True, "locks": ["D4", "D5"]},
-        ]})
+        self._post(
+            "/soll/toggle/",
+            {
+                "ops": [
+                    {
+                        "kind": "group",
+                        "id": self.g1.id,
+                        "on": False,
+                        "locks": ["D1", "D2"],
+                    },
+                    {"kind": "tp", "id": "AAA", "on": True, "locks": ["D4", "D5"]},
+                ]
+            },
+        )
         self.assertEqual(set(self.g1.doors.values_list("serial", flat=True)), {"D3"})
-        self.assertEqual(set(self.tp.desired_locks.values_list("serial", flat=True)),
-                         {"D4", "D5"})
+        self.assertEqual(
+            set(self.tp.desired_locks.values_list("serial", flat=True)), {"D4", "D5"}
+        )
 
     def test_group_assign_endpoint(self):
-        r = self._post("/soll/group-assign/",
-                       {"transponder": "AAA", "group": self.g1.id, "assigned": True})
+        r = self._post(
+            "/soll/group-assign/",
+            {"transponder": "AAA", "group": self.g1.id, "assigned": True},
+        )
         self.assertEqual(r.json()["desired"], 3)
         self.assertIn(self.g1, self.tp.groups.all())
 
     def test_group_crud_endpoints(self):
         r = self._post("/groups/create/", {"name": "New"})
         gid = r.json()["id"]
+        original_code = Group.objects.get(pk=gid).export_code
         self._post(f"/groups/{gid}/rename/", {"name": "Renamed"})
-        self.assertEqual(Group.objects.get(pk=gid).name, "Renamed")
+        renamed = Group.objects.get(pk=gid)
+        self.assertEqual(renamed.name, "Renamed")
+        self.assertEqual(renamed.export_code, original_code)
         self._post(f"/groups/{gid}/delete/", {})
         self.assertFalse(Group.objects.filter(pk=gid).exists())
+
+    def test_group_create_generates_or_accepts_custom_code(self):
+        auto = self._post("/groups/create/", {"name": "New"})
+        self.assertEqual(auto.status_code, 200)
+        self.assertEqual(auto.json()["export_code"], "N")
+        custom = self._post(
+            "/groups/create/", {"name": "Workshop", "export_code": "ws"}
+        )
+        self.assertEqual(custom.status_code, 200)
+        self.assertEqual(custom.json()["export_code"], "WS")
+
+    def test_group_metadata_update_replaces_implicit_group(self):
+        first = self._post(
+            f"/groups/{self.g1.pk}/metadata/",
+            {"export_code": "ONE", "is_implicit": True},
+        )
+        second = self._post(
+            f"/groups/{self.g2.pk}/metadata/",
+            {"export_code": "TWO", "is_implicit": True},
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.g1.refresh_from_db()
+        self.g2.refresh_from_db()
+        self.assertFalse(self.g1.is_implicit)
+        self.assertTrue(self.g2.is_implicit)
+
+    def test_group_metadata_rejects_duplicate_and_malformed_codes(self):
+        duplicate = self._post(
+            f"/groups/{self.g2.pk}/metadata/",
+            {"export_code": self.g1.export_code.lower(), "is_implicit": False},
+        )
+        malformed = self._post(
+            f"/groups/{self.g2.pk}/metadata/",
+            {"export_code": "TOO-LONG", "is_implicit": False},
+        )
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertIn("error", duplicate.json())
+        self.assertEqual(malformed.status_code, 400)
+        self.assertIn("error", malformed.json())
+
+    def test_group_code_payloads_must_be_strings(self):
+        create = self._post("/groups/create/", {"name": "Numeric", "export_code": 123})
+        metadata = self._post(
+            f"/groups/{self.g1.pk}/metadata/",
+            {"export_code": ["G"], "is_implicit": False},
+        )
+
+        self.assertEqual(create.status_code, 400)
+        self.assertIn("error", create.json())
+        self.assertEqual(metadata.status_code, 400)
+        self.assertIn("error", metadata.json())
+
+    def test_existing_group_still_validates_supplied_code(self):
+        malformed = self._post(
+            "/groups/create/",
+            {"name": self.g1.name, "export_code": "BAD-CODE"},
+        )
+        conflicting = self._post(
+            "/groups/create/",
+            {"name": self.g1.name, "export_code": "NEW"},
+        )
+        matching = self._post(
+            "/groups/create/",
+            {"name": self.g1.name, "export_code": self.g1.export_code.lower()},
+        )
+
+        self.assertEqual(malformed.status_code, 400)
+        self.assertEqual(conflicting.status_code, 400)
+        self.assertEqual(matching.status_code, 200)
+
+    def test_group_pages_show_export_metadata(self):
+        list_response = self.client.get("/groups/")
+        detail_response = self.client.get(f"/groups/{self.g1.pk}/")
+        self.assertContains(list_response, self.g1.export_code)
+        self.assertContains(detail_response, 'name="export_code"')
+        self.assertContains(detail_response, "Implizit in Kombinationen")
 
     def test_copy_and_clear(self):
         self.tp.locks.set(self.L[:2])
         self.tp.planned_locks.set([self.L[2]])
         self._post("/transponders/AAA/soll/", {"action": "copy"})
-        self.assertEqual(self.tp.desired_locks.count(), 3)   # active ∪ planned
+        self.assertEqual(self.tp.desired_locks.count(), 3)  # active ∪ planned
         self._post("/transponders/AAA/soll/", {"action": "clear"})
         self.assertEqual(self.tp.desired_locks.count(), 0)
 
     def test_pages_render(self):
-        for url in ["/soll/", "/soll/?tp=AAA", "/groups/",
-                    f"/groups/{self.g1.id}/", "/transponders/AAA/", "/locks/D1/"]:
+        for url in [
+            "/soll/",
+            "/soll/?tp=AAA",
+            "/groups/",
+            f"/groups/{self.g1.id}/",
+            "/transponders/AAA/",
+            "/locks/D1/",
+        ]:
             self.assertEqual(self.client.get(url).status_code, 200, url)
 
     def test_admin_removed(self):
@@ -1598,37 +2057,57 @@ class SollEditingTests(TestCase):
 
     def test_group_door_edit_propagates_to_current_members(self):
         from access import soll
-        soll.assign_group(self.tp, self.g1)          # tp ∈ g1 (D1 D2 D3)
-        soll.set_group_doors(self.g1, [self.L[3]], True)   # add D4
+
+        soll.assign_group(self.tp, self.g1)  # tp ∈ g1 (D1 D2 D3)
+        soll.set_group_doors(self.g1, [self.L[3]], True)  # add D4
         self.assertIn("D4", self.tp.desired_locks.values_list("serial", flat=True))
         soll.set_group_doors(self.g1, [self.L[0]], False)  # remove D1 (only in g1)
         self.assertNotIn("D1", self.tp.desired_locks.values_list("serial", flat=True))
 
     def test_copy_clears_group_membership(self):
         from access import soll
+
         soll.assign_group(self.tp, self.g1)
         self.tp.locks.set(self.L[:1])
         soll.copy_current_to_desired(self.tp)
-        self.assertEqual(self.tp.groups.count(), 0)   # groups cleared
+        self.assertEqual(self.tp.groups.count(), 0)  # groups cleared
         self.assertEqual(
-            set(self.tp.desired_locks.values_list("serial", flat=True)), {"D1"})
+            set(self.tp.desired_locks.values_list("serial", flat=True)), {"D1"}
+        )
 
     def test_toggle_bad_json_and_unknown_ids_are_safe(self):
-        r = self.client.post("/soll/toggle/", data="not json",
-                             content_type="application/json")
+        r = self.client.post(
+            "/soll/toggle/", data="not json", content_type="application/json"
+        )
         self.assertEqual(r.status_code, 400)
         before = set(self.g1.doors.values_list("serial", flat=True))
-        self._post("/soll/toggle/", {"ops": [
-            {"kind": "group", "id": 99999, "on": False, "locks": ["D1"]},
-            {"kind": "group", "id": "abc", "on": False, "locks": ["D1"]},   # non-int
-            {"kind": "tp", "id": "NOPE", "on": True, "locks": ["D1"]},
-            {"kind": "group", "id": self.g1.id, "on": True, "locks": ["NOLOCK"]},
-        ]})
+        self._post(
+            "/soll/toggle/",
+            {
+                "ops": [
+                    {"kind": "group", "id": 99999, "on": False, "locks": ["D1"]},
+                    {
+                        "kind": "group",
+                        "id": "abc",
+                        "on": False,
+                        "locks": ["D1"],
+                    },  # non-int
+                    {"kind": "tp", "id": "NOPE", "on": True, "locks": ["D1"]},
+                    {
+                        "kind": "group",
+                        "id": self.g1.id,
+                        "on": True,
+                        "locks": ["NOLOCK"],
+                    },
+                ]
+            },
+        )
         self.assertEqual(set(self.g1.doors.values_list("serial", flat=True)), before)
 
     def test_group_assign_bad_request(self):
-        r = self.client.post("/soll/group-assign/", data="{}",
-                             content_type="application/json")
+        r = self.client.post(
+            "/soll/group-assign/", data="{}", content_type="application/json"
+        )
         self.assertEqual(r.status_code, 400)
 
     def test_reverse_door_editor(self):
@@ -1636,8 +2115,10 @@ class SollEditingTests(TestCase):
         r = self.client.get("/locks/D1/")
         self.assertIn(self.tp, list(r.context["desirers"]))
         self.assertNotIn(self.tp, list(r.context["addable"]))
-        self._post("/soll/toggle/",
-                   {"ops": [{"kind": "tp", "id": "AAA", "on": False, "locks": ["D1"]}]})
+        self._post(
+            "/soll/toggle/",
+            {"ops": [{"kind": "tp", "id": "AAA", "on": False, "locks": ["D1"]}]},
+        )
         self.assertNotIn(self.L[0], self.tp.desired_locks.all())
 
 
@@ -1646,14 +2127,16 @@ class OverlapScopeTests(TestCase):
     planned end state (active ∪ planned)."""
 
     def setUp(self):
-        L = [Lock.objects.create(serial=f"L{i}", door_name=f"Door {i}")
-             for i in range(1, 4)]
+        L = [
+            Lock.objects.create(serial=f"L{i}", door_name=f"Door {i}")
+            for i in range(1, 4)
+        ]
         self.a = Transponder.objects.create(serial="AAA1111", person_name="A")
         self.b = Transponder.objects.create(serial="BBB2222", person_name="B")
-        self.a.locks.set(L[:2])            # active {L1,L2}
-        self.a.planned_locks.set([L[2]])   # planned {L3}
-        self.b.locks.set([L[0]])           # active {L1}
-        self.b.planned_locks.set(L[1:])    # planned {L2,L3}
+        self.a.locks.set(L[:2])  # active {L1,L2}
+        self.a.planned_locks.set([L[2]])  # planned {L3}
+        self.b.locks.set([L[0]])  # active {L1}
+        self.b.planned_locks.set(L[1:])  # planned {L2,L3}
 
     def _pct(self, resp):
         tps = list(resp.context["tps"])
@@ -1682,7 +2165,7 @@ class OverlapScopeTests(TestCase):
     def test_diff_scope_zero_when_no_shared_pending(self):
         # A transponder with no pending changes shares nothing in the diff view.
         c = Transponder.objects.create(serial="CCC3333", person_name="C")
-        c.locks.set(Lock.objects.all())          # all active, none planned
+        c.locks.set(Lock.objects.all())  # all active, none planned
         r = self.client.get("/overlap/?scope=diff")
         tps = list(r.context["tps"])
         rows = r.context["rows"]
@@ -1695,7 +2178,8 @@ class OverlapScopeTests(TestCase):
 
     def test_unknown_scope_falls_back_to_active(self):
         self.assertEqual(
-            self.client.get("/overlap/?scope=bogus").context["scope"], "active")
+            self.client.get("/overlap/?scope=bogus").context["scope"], "active"
+        )
 
     def test_toggle_hidden_without_pending(self):
         self.a.planned_locks.clear()
@@ -1710,7 +2194,7 @@ class OverlapScopeTests(TestCase):
         L = list(Lock.objects.all())
         c = Transponder.objects.create(serial="CCC3333")
         d = Transponder.objects.create(serial="DDD4444")
-        c.locks.set([L[0]])                # active only, nothing planned
+        c.locks.set([L[0]])  # active only, nothing planned
         d.locks.set([L[1]])
         groups = self.client.get("/overlap/?scope=diff").context["clone_groups"]
         for g in groups:
@@ -1724,12 +2208,12 @@ class OverlapScopeTests(TestCase):
         L = list(Lock.objects.all())
         for s in ("EEE5555", "FFF6666"):
             t = Transponder.objects.create(serial=s)
-            t.locks.set(L[:2])             # active {L1,L2}
-            t.planned_locks.set([L[2]])    # planned {L3}
-        groups = self.client.get(
-            "/overlap/?scope=planned").context["clone_groups"]
-        grp = next(g for g in groups
-                   if any(t.serial == "EEE5555" for t in g["transponders"]))
+            t.locks.set(L[:2])  # active {L1,L2}
+            t.planned_locks.set([L[2]])  # planned {L3}
+        groups = self.client.get("/overlap/?scope=planned").context["clone_groups"]
+        grp = next(
+            g for g in groups if any(t.serial == "EEE5555" for t in g["transponders"])
+        )
         self.assertEqual(grp["doors"], 3)  # active∪planned, not the 2 active
 
 
@@ -1737,21 +2221,26 @@ class InheritedAndIndividualTests(TestCase):
     """Group-inherited vs individual: editor flags + the /individual/ audit."""
 
     def setUp(self):
-        self.L = [Lock.objects.create(serial=f"D{i}", door_name=f"Door {i}",
-                                      location="Bau X") for i in range(1, 6)]
-        self.tp = Transponder.objects.create(serial="AAA", person_name="A",
-                                             asta_number=1)
+        self.L = [
+            Lock.objects.create(serial=f"D{i}", door_name=f"Door {i}", location="Bau X")
+            for i in range(1, 6)
+        ]
+        self.tp = Transponder.objects.create(
+            serial="AAA", person_name="A", asta_number=1
+        )
         self.g1 = Group.objects.create(name="G1")
-        self.g1.doors.set(self.L[:3])          # D1 D2 D3
+        self.g1.doors.set(self.L[:3])  # D1 D2 D3
 
     def _rowmap(self, ctx):
-        return {row["lock"].serial: row
-                for sec in ctx["sections"] for row in sec["rows"]}
+        return {
+            row["lock"].serial: row for sec in ctx["sections"] for row in sec["rows"]
+        }
 
     def test_transponder_editor_flags_inherited_vs_individual(self):
         from access import soll
-        soll.assign_group(self.tp, self.g1)        # D1 D2 D3 inherited
-        self.tp.desired_locks.add(self.L[3])       # D4 individual
+
+        soll.assign_group(self.tp, self.g1)  # D1 D2 D3 inherited
+        self.tp.desired_locks.add(self.L[3])  # D4 individual
         rows = self._rowmap(self.client.get("/transponders/AAA/").context)
         self.assertTrue(rows["D1"]["inherited"])
         self.assertEqual(rows["D1"]["via"], "G1")
@@ -1763,32 +2252,40 @@ class InheritedAndIndividualTests(TestCase):
 
     def test_soll_matrix_flags_inherited_tp_cell(self):
         from access import soll
+
         soll.assign_group(self.tp, self.g1)
         ctx = self.client.get("/soll/?tp=AAA").context
-        cell = next(c for sec in ctx["sections"] for row in sec["rows"]
-                    if row["lock"].serial == "D1"
-                    for c in row["cells"] if c["kind"] == "tp")
+        cell = next(
+            c
+            for sec in ctx["sections"]
+            for row in sec["rows"]
+            if row["lock"].serial == "D1"
+            for c in row["cells"]
+            if c["kind"] == "tp"
+        )
         self.assertTrue(cell["inherited"])
 
     def test_individual_soll_scope_lists_individual_desired(self):
         # Default scope is the Soll: individual desired doors (not from a group).
         from access import soll
-        soll.assign_group(self.tp, self.g1)          # D1 D2 D3 desired via group
-        self.tp.desired_locks.add(self.L[3])         # D4 individual Soll
-        self.tp.locks.set([self.L[3]])               # D4 already active
+
+        soll.assign_group(self.tp, self.g1)  # D1 D2 D3 desired via group
+        self.tp.desired_locks.add(self.L[3])  # D4 individual Soll
+        self.tp.locks.set([self.L[3]])  # D4 already active
         ctx = self.client.get("/individual/").context
         self.assertEqual(ctx["scope"], "soll")
         self.assertEqual(len(ctx["rows"]), 1)
         states = {d["lock"].serial: d["state"] for d in ctx["rows"][0]["doors"]}
-        self.assertEqual(states, {"D4": "active"})   # D1-D3 excluded (group)
+        self.assertEqual(states, {"D4": "active"})  # D1-D3 excluded (group)
         self.assertEqual(ctx["n_grants"], 1)
 
     def test_individual_soll_add_state(self):
         # A Soll door not yet programmed is tagged 'add'; ?scope=planned falls
         # through to the Soll view.
         from access import soll
+
         soll.assign_group(self.tp, self.g1)
-        self.tp.desired_locks.add(self.L[3])         # D4 wished, not programmed
+        self.tp.desired_locks.add(self.L[3])  # D4 wished, not programmed
         ctx = self.client.get("/individual/?scope=planned").context
         self.assertEqual(ctx["scope"], "soll")
         states = {d["lock"].serial: d["state"] for d in ctx["rows"][0]["doors"]}
@@ -1797,10 +2294,11 @@ class InheritedAndIndividualTests(TestCase):
     def test_individual_ist_scope_includes_planned_and_removed(self):
         # Ist = active ∪ planned ∪ hollow-×; ?scope=active maps to ist.
         from access import soll
-        soll.assign_group(self.tp, self.g1)          # D1 D2 D3
-        self.tp.locks.set([self.L[0], self.L[2]])    # active: D1(group), D3(group)
-        self.tp.planned_locks.set([self.L[3]])       # planned: D4 (individual)
-        self.tp.removed_locks.set([self.L[4]])       # hollow ×: D5 (individual)
+
+        soll.assign_group(self.tp, self.g1)  # D1 D2 D3
+        self.tp.locks.set([self.L[0], self.L[2]])  # active: D1(group), D3(group)
+        self.tp.planned_locks.set([self.L[3]])  # planned: D4 (individual)
+        self.tp.removed_locks.set([self.L[4]])  # hollow ×: D5 (individual)
         ctx = self.client.get("/individual/?scope=active").context
         self.assertEqual(ctx["scope"], "ist")
         states = {d["lock"].serial: d["state"] for d in ctx["rows"][0]["doors"]}
@@ -1809,15 +2307,17 @@ class InheritedAndIndividualTests(TestCase):
     def test_individual_soll_removed_is_conflict_not_add(self):
         # A wished door that is currently a hollow-× shows 'removed', not 'add'.
         from access import soll
+
         soll.assign_group(self.tp, self.g1)
-        self.tp.desired_locks.add(self.L[3])         # D4 individual Soll
-        self.tp.removed_locks.add(self.L[3])         # but currently pending removal
+        self.tp.desired_locks.add(self.L[3])  # D4 individual Soll
+        self.tp.removed_locks.add(self.L[3])  # but currently pending removal
         ctx = self.client.get("/individual/").context
         states = {d["lock"].serial: d["state"] for d in ctx["rows"][0]["doors"]}
         self.assertEqual(states, {"D4": "removed"})
 
     def test_individual_omits_covered_and_keeps_groupless(self):
         from access import soll
+
         # AAA's Soll is fully its group -> no individual Soll -> omitted.
         soll.assign_group(self.tp, self.g1)
         # BBB has no group but an individual Soll door.
@@ -1829,45 +2329,61 @@ class InheritedAndIndividualTests(TestCase):
 
     def test_lock_detail_individual_desirers_and_status(self):
         from access import soll
+
         d1 = self.L[0]
-        soll.assign_group(self.tp, self.g1)   # AAA desires D1 via group (inherited)
-        self.tp.locks.add(d1)                 # AAA active on D1 -> keep
+        soll.assign_group(self.tp, self.g1)  # AAA desires D1 via group (inherited)
+        self.tp.locks.add(d1)  # AAA active on D1 -> keep
         b = Transponder.objects.create(serial="BBB")
-        b.desired_locks.add(d1)               # BBB desires D1 individually
+        b.desired_locks.add(d1)  # BBB desires D1 individually
         c = Transponder.objects.create(serial="CCC")
-        c.locks.add(d1)                       # active, not desired -> will be removed
+        c.locks.add(d1)  # active, not desired -> will be removed
         d = Transponder.objects.create(serial="DDD")
-        d.planned_locks.add(d1)               # planned
+        d.planned_locks.add(d1)  # planned
         e = Transponder.objects.create(serial="EEE")
-        e.removed_locks.add(d1)               # hollow × -> withdrawn, pending removal
+        e.removed_locks.add(d1)  # hollow × -> withdrawn, pending removal
         ctx = self.client.get(f"/locks/{d1.serial}/").context
         # individual desirers only — AAA (group-inherited) excluded
         self.assertEqual([t.serial for t in ctx["desirers"]], ["BBB"])
-        cols = {col["title"]: [it["tp"].serial for it in col["items"]]
-                for col in ctx["status_cols"]}
+        cols = {
+            col["title"]: [it["tp"].serial for it in col["items"]]
+            for col in ctx["status_cols"]
+        }
         self.assertEqual(cols["Bleibt"], ["AAA"])
         self.assertEqual(cols["Wird entfernt"], ["CCC", "EEE"])  # active∖Soll + hollow
         self.assertEqual(cols["Geplant"], ["DDD"])
-        badges = {it["tp"].serial: it["badge"]
-                  for col in ctx["status_cols"] for it in col["items"]}
-        self.assertEqual(badges["EEE"], "entzogen")        # from removed_locks
-        self.assertEqual(badges["CCC"], "nicht im Soll")   # active but unwished
+        badges = {
+            it["tp"].serial: it["badge"]
+            for col in ctx["status_cols"]
+            for it in col["items"]
+        }
+        self.assertEqual(badges["EEE"], "entzogen")  # from removed_locks
+        self.assertEqual(badges["CCC"], "nicht im Soll")  # active but unwished
 
     def test_import_matrix_routes_hollow_to_removed(self):
         # A synthetic matrix with one hollow (remove) mark lands in removed_locks,
         # not in active/planned.
         from access import services, ocr
+
         res = ocr.MatrixResult(source_file="x.pdf", ocr_scan=True)
-        res.persons.append(ocr.MatrixPerson(
-            column=1, serial="ZZZ", raw_serial="ZZZ", serial_valid=True,
-            serial_suspect=False, asta_number=None, person_name="Z"))
+        res.persons.append(
+            ocr.MatrixPerson(
+                column=1,
+                serial="ZZZ",
+                raw_serial="ZZZ",
+                serial_valid=True,
+                serial_suspect=False,
+                asta_number=None,
+                person_name="Z",
+            )
+        )
         res.doors.append(ocr.MatrixDoor(row=1, name=self.L[0].door_name))
         res.marks.add((1, 1))
         res.mark_states[(1, 1)] = "remove"
         services._import_matrix(res, "x.pdf")
         z = Transponder.objects.get(serial="ZZZ")
-        self.assertEqual([lk.serial for lk in z.removed_locks.all()],
-                         [self.L[0].serial])
+        self.assertEqual(
+            [lk.serial for lk in z.removed_locks.all()], [self.L[0].serial]
+        )
         self.assertEqual(z.locks.count(), 0)
         self.assertEqual(z.planned_locks.count(), 0)
 
@@ -1875,11 +2391,12 @@ class InheritedAndIndividualTests(TestCase):
         # g1 has 3 doors; give it 2 members. Without distinct=True both counts
         # would cross-multiply to 3×2 = 6.
         from access import soll
+
         soll.assign_group(self.tp, self.g1)
         soll.assign_group(Transponder.objects.create(serial="BBB"), self.g1)
         groups = {g.name: g for g in self.client.get("/groups/").context["groups"]}
-        self.assertEqual(groups["G1"].n, 3)   # doors, not 6
-        self.assertEqual(groups["G1"].m, 2)   # members, not 6
+        self.assertEqual(groups["G1"].n, 3)  # doors, not 6
+        self.assertEqual(groups["G1"].m, 2)  # members, not 6
 
     def test_lock_detail_removed_and_desired_shows_keep(self):
         # A hollow-× door that the Soll still wants is a re-grant → "Bleibt".
@@ -1887,35 +2404,47 @@ class InheritedAndIndividualTests(TestCase):
         t = Transponder.objects.create(serial="RRR")
         t.removed_locks.add(d1)
         t.desired_locks.add(d1)
-        cols = {c["title"]: {it["tp"].serial: it["badge"] for it in c["items"]}
-                for c in self.client.get(f"/locks/{d1.serial}/").context["status_cols"]}
+        cols = {
+            c["title"]: {it["tp"].serial: it["badge"] for it in c["items"]}
+            for c in self.client.get(f"/locks/{d1.serial}/").context["status_cols"]
+        }
         self.assertEqual(cols["Bleibt"].get("RRR"), "Soll: behalten")
         self.assertNotIn("RRR", cols["Wird entfernt"])
 
     def test_import_reactivation_clears_removed(self):
         from access import services, ocr
+
         tp = Transponder.objects.create(serial="YYY")
-        tp.removed_locks.add(self.L[0])          # prior hollow ×
+        tp.removed_locks.add(self.L[0])  # prior hollow ×
         res = ocr.MatrixResult(source_file="x.pdf", ocr_scan=True)
-        res.persons.append(ocr.MatrixPerson(
-            column=1, serial="YYY", raw_serial="YYY", serial_valid=True,
-            serial_suspect=False, asta_number=None, person_name=""))
+        res.persons.append(
+            ocr.MatrixPerson(
+                column=1,
+                serial="YYY",
+                raw_serial="YYY",
+                serial_valid=True,
+                serial_suspect=False,
+                asta_number=None,
+                person_name="",
+            )
+        )
         res.doors.append(ocr.MatrixDoor(row=1, name=self.L[0].door_name))
         res.marks.add((1, 1))
-        res.mark_states[(1, 1)] = "active"       # now a bold ×
+        res.mark_states[(1, 1)] = "active"  # now a bold ×
         services._import_matrix(res, "x.pdf")
         tp.refresh_from_db()
-        self.assertIn(self.L[0], tp.locks.all())              # active now
-        self.assertNotIn(self.L[0], tp.removed_locks.all())   # removed cleared
+        self.assertIn(self.L[0], tp.locks.all())  # active now
+        self.assertNotIn(self.L[0], tp.removed_locks.all())  # removed cleared
 
     def test_set_desired_ignores_inherited_off_toggle(self):
         from access import soll
-        soll.assign_group(self.tp, self.g1)      # D1 D2 D3 inherited & desired
+
+        soll.assign_group(self.tp, self.g1)  # D1 D2 D3 inherited & desired
         # A replayed/hostile off-toggle of an inherited door must be ignored.
         soll.set_desired(self.tp, [self.L[0]], wished=False)
         self.assertIn(self.L[0], self.tp.desired_locks.all())
         # But a genuinely individual door can still be toggled off.
-        self.tp.desired_locks.add(self.L[3])     # D4 individual
+        self.tp.desired_locks.add(self.L[3])  # D4 individual
         soll.set_desired(self.tp, [self.L[3]], wished=False)
         self.assertNotIn(self.L[3], self.tp.desired_locks.all())
 
@@ -1951,6 +2480,7 @@ class LoginGateTests(TestCase):
 
     def test_authenticated_user_gets_through(self):
         from django.contrib.auth import get_user_model
+
         get_user_model().objects.create_user("u", password="pw-abc-12345")
         self.client.login(username="u", password="pw-abc-12345")
         self.assertEqual(self.client.get("/").status_code, 200)
@@ -1959,17 +2489,24 @@ class LoginGateTests(TestCase):
 class EnsureUserCommandTests(TestCase):
     def test_creates_then_updates_from_env(self):
         from django.contrib.auth import authenticate
-        env = {"KEYMGMT_ADMIN_USERNAME": "boss", "KEYMGMT_ADMIN_PASSWORD": "s3cret-pw-9"}
+
+        env = {
+            "KEYMGMT_ADMIN_USERNAME": "boss",
+            "KEYMGMT_ADMIN_PASSWORD": "s3cret-pw-9",
+        }
         with mock.patch.dict(os.environ, env):
             call_command("ensure_user", stdout=io.StringIO())
         self.assertIsNotNone(authenticate(username="boss", password="s3cret-pw-9"))
         # idempotent + rotates the password on re-run
-        with mock.patch.dict(os.environ, {**env, "KEYMGMT_ADMIN_PASSWORD": "new-pw-77"}):
+        with mock.patch.dict(
+            os.environ, {**env, "KEYMGMT_ADMIN_PASSWORD": "new-pw-77"}
+        ):
             call_command("ensure_user", stdout=io.StringIO())
         self.assertIsNotNone(authenticate(username="boss", password="new-pw-77"))
 
     def test_noop_without_env(self):
         from django.contrib.auth import get_user_model
+
         out = io.StringIO()
         call_command("ensure_user", stdout=out)
         self.assertEqual(get_user_model().objects.count(), 0)
@@ -1980,16 +2517,30 @@ class LockTransponderCrudTests(TestCase):
     """Create / edit / delete locks and transponders from the UI."""
 
     def test_lock_create_edit_delete(self):
-        r = self.client.post("/locks/new/", {
-            "serial": "DC-99", "door_name": "Neue Tür", "room_number": "42",
-            "location": "MUC.X", "area": ""})
+        r = self.client.post(
+            "/locks/new/",
+            {
+                "serial": "DC-99",
+                "door_name": "Neue Tür",
+                "room_number": "42",
+                "location": "MUC.X",
+                "area": "",
+            },
+        )
         self.assertEqual(r.status_code, 302)
         lk = Lock.objects.get(serial="DC-99")
         self.assertEqual((lk.door_name, lk.room_number), ("Neue Tür", "42"))
         # edit: serial is disabled, so a submitted change is ignored
-        r = self.client.post("/locks/DC-99/edit/", {
-            "serial": "DC-CHANGED", "door_name": "Umbenannt", "room_number": "",
-            "location": "", "area": ""})
+        r = self.client.post(
+            "/locks/DC-99/edit/",
+            {
+                "serial": "DC-CHANGED",
+                "door_name": "Umbenannt",
+                "room_number": "",
+                "location": "",
+                "area": "",
+            },
+        )
         self.assertEqual(r.status_code, 302)
         lk.refresh_from_db()
         self.assertEqual(lk.door_name, "Umbenannt")
@@ -2005,22 +2556,43 @@ class LockTransponderCrudTests(TestCase):
 
     def test_lock_create_duplicate_serial_rejected(self):
         Lock.objects.create(serial="DC-1", door_name="A")
-        r = self.client.post("/locks/new/", {
-            "serial": "DC-1", "door_name": "B", "room_number": "",
-            "location": "", "area": ""})
-        self.assertEqual(r.status_code, 200)   # re-rendered with a form error
+        r = self.client.post(
+            "/locks/new/",
+            {
+                "serial": "DC-1",
+                "door_name": "B",
+                "room_number": "",
+                "location": "",
+                "area": "",
+            },
+        )
+        self.assertEqual(r.status_code, 200)  # re-rendered with a form error
         self.assertEqual(Lock.objects.filter(serial="DC-1").count(), 1)
 
     def test_transponder_create_edit_delete(self):
-        r = self.client.post("/transponders/new/", {
-            "serial": "T1", "asta_number": "5", "person_name": "Muster",
-            "locking_system": "", "printed_on": ""})
+        r = self.client.post(
+            "/transponders/new/",
+            {
+                "serial": "T1",
+                "asta_number": "5",
+                "person_name": "Muster",
+                "locking_system": "",
+                "printed_on": "",
+            },
+        )
         self.assertEqual(r.status_code, 302)
         tp = Transponder.objects.get(serial="T1")
         self.assertEqual((tp.person_name, tp.asta_number), ("Muster", 5))
-        r = self.client.post("/transponders/T1/edit/", {
-            "serial": "T1", "asta_number": "", "person_name": "Neu",
-            "locking_system": "", "printed_on": ""})
+        r = self.client.post(
+            "/transponders/T1/edit/",
+            {
+                "serial": "T1",
+                "asta_number": "",
+                "person_name": "Neu",
+                "locking_system": "",
+                "printed_on": "",
+            },
+        )
         self.assertEqual(r.status_code, 302)
         tp.refresh_from_db()
         self.assertEqual(tp.person_name, "Neu")
@@ -2041,13 +2613,27 @@ class LockTransponderCrudTests(TestCase):
     def test_reserved_or_invalid_serial_rejected(self):
         # "new" collides with the create route; "/" breaks the detail URL.
         for bad in ("new", "DC/1"):
-            r = self.client.post("/locks/new/", {
-                "serial": bad, "door_name": "X", "room_number": "",
-                "location": "", "area": ""})
-            self.assertEqual(r.status_code, 200)   # re-rendered with an error
+            r = self.client.post(
+                "/locks/new/",
+                {
+                    "serial": bad,
+                    "door_name": "X",
+                    "room_number": "",
+                    "location": "",
+                    "area": "",
+                },
+            )
+            self.assertEqual(r.status_code, 200)  # re-rendered with an error
             self.assertFalse(Lock.objects.filter(serial=bad).exists())
         # a normal serial still creates fine
-        r = self.client.post("/transponders/new/", {
-            "serial": "new", "asta_number": "", "person_name": "",
-            "locking_system": "", "printed_on": ""})
+        r = self.client.post(
+            "/transponders/new/",
+            {
+                "serial": "new",
+                "asta_number": "",
+                "person_name": "",
+                "locking_system": "",
+                "printed_on": "",
+            },
+        )
         self.assertFalse(Transponder.objects.filter(serial="new").exists())

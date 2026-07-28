@@ -41,7 +41,21 @@
       </div>
     </div>
 
-    <div>
+    <div class="space-y-5">
+      <div>
+        <p class="eyebrow">Export-Gruppe</p>
+        <div class="mt-2 card p-4 space-y-3">
+          <label class="block text-xs font-medium text-slate-500" for="export-code">Export-Code</label>
+          <input id="export-code" name="export_code" x-model="exportCode" maxlength="4"
+                 class="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm font-mono uppercase">
+          <label class="flex items-start gap-2 text-sm text-slate-600">
+            <input x-model="implicit" type="checkbox" class="mt-0.5 rounded border-slate-300">
+            <span><span class="font-medium text-slate-700">Implizit in Kombinationen</span><br><span class="text-xs text-slate-400">Code entfällt, sobald eine weitere Gruppe zugewiesen ist.</span></span>
+          </label>
+          <button type="button" @click="saveMetadata()" class="btn-primary w-full">Export speichern</button>
+        </div>
+      </div>
+      <div>
       <p class="eyebrow">Zugewiesene Transponder</p>
       <div class="mt-2 card p-4 max-h-[32rem] overflow-auto">
         <ul class="space-y-1 text-sm">
@@ -51,6 +65,7 @@
           <li class="text-slate-400">Keine.</li>
           {% endfor %}
         </ul>
+      </div>
       </div>
     </div>
   </div>
@@ -62,6 +77,8 @@
   function groupEdit() {
     return {
       editing: false,
+      exportCode: '{{ group.export_code|escapejs }}',
+      implicit: {{ group.is_implicit|yesno:"true,false" }},
       init() {
         if (consumeReenterEditing()) this.editing = true;
         initSollGrid(this.$refs.grid, '{% url 'soll_toggle' %}');
@@ -69,13 +86,27 @@
       async rename() {
         const n = prompt('Gruppe umbenennen:', '{{ group.name|escapejs }}');
         if (!n) return;
-        await sollPost('{% url 'group_rename' group.pk %}', {name: n});
-        reloadKeepEditing();
+        try {
+          await sollPost('{% url 'group_rename' group.pk %}', {name: n});
+          reloadKeepEditing();
+        } catch (error) { alert(error.message); }
+      },
+      async saveMetadata() {
+        try {
+          const result = await sollPost('{% url 'group_metadata' group.pk %}', {
+            export_code: this.exportCode,
+            is_implicit: this.implicit,
+          });
+          this.exportCode = result.export_code;
+          this.implicit = result.is_implicit;
+        } catch (error) { alert(error.message); }
       },
       async remove() {
         if (!confirm('Gruppe "{{ group.name|escapejs }}" löschen?')) return;
-        await sollPost('{% url 'group_delete' group.pk %}', {});
-        location.href = '{% url 'group_list' %}';
+        try {
+          await sollPost('{% url 'group_delete' group.pk %}', {});
+          location.href = '{% url 'group_list' %}';
+        } catch (error) { alert(error.message); }
       },
     };
   }

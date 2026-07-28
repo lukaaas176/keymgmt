@@ -141,19 +141,25 @@
       async createGroup() {
         const name = this.newGroup.trim();
         if (!name) return;
-        await sollPost('{% url 'group_create' %}', {name});
-        reloadKeepEditing();
+        try {
+          await sollPost('{% url 'group_create' %}', {name});
+          reloadKeepEditing();
+        } catch (error) { alert(error.message); }
       },
       async renameGroup(id, cur) {
         const name = prompt('Gruppe umbenennen:', cur);
         if (!name || name === cur) return;
-        await sollPost(`/groups/${id}/rename/`, {name});
-        reloadKeepEditing();
+        try {
+          await sollPost(`/groups/${id}/rename/`, {name});
+          reloadKeepEditing();
+        } catch (error) { alert(error.message); }
       },
       async deleteGroup(id, name) {
         if (!confirm(`Gruppe "${name}" löschen? Die Türzuordnung der Gruppe geht verloren (die Soll-Rechte der Transponder bleiben).`)) return;
-        await sollPost(`/groups/${id}/delete/`, {});
-        reloadKeepEditing();
+        try {
+          await sollPost(`/groups/${id}/delete/`, {});
+          reloadKeepEditing();
+        } catch (error) { alert(error.message); }
       },
     };
   }

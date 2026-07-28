@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .group_labels import combined_group_label
 from .models import Lock, Transponder
 
 _PDF_DIR = Path(__file__).resolve().parent / "templates" / "pdf"
@@ -34,8 +35,11 @@ ACTIVE, PLANNED = 2, 1
 
 
 def _transponders_and_doors(*relations):
-    transponders = list(Transponder.objects.prefetch_related(*relations)
-                        .order_by("asta_number", "person_name", "serial"))
+    transponders = list(
+        Transponder.objects.prefetch_related(*relations).order_by(
+            "asta_number", "person_name", "serial"
+        )
+    )
     doors = list(Lock.objects.order_by("location", "door_name", "serial"))
     row_of = {lk.serial: i for i, lk in enumerate(doors)}
     return transponders, doors, row_of
@@ -45,12 +49,23 @@ def _meta(transponders, doors, **extra):
     return {
         "title": "Schließmatrix",
         "generated": extra.pop("today", dt.date.today()).isoformat(),
-        "transponders": [{"label": t.label, "serial": t.serial,
-                   "asta": t.asta_number,
-                   "groups": [g.name for g in t.groups.all()]}
-                  for t in transponders],
-        "doors": [{"name": d.door_name or d.serial, "serial": d.serial,
-                   "location": d.location or d.area or ""} for d in doors],
+        "transponders": [
+            {
+                "label": t.label,
+                "serial": t.serial,
+                "asta": t.asta_number,
+                "group": combined_group_label(t.groups.all()),
+            }
+            for t in transponders
+        ],
+        "doors": [
+            {
+                "name": d.door_name or d.serial,
+                "serial": d.serial,
+                "location": d.location or d.area or "",
+            }
+            for d in doors
+        ],
         **extra,
     }
 
@@ -66,7 +81,8 @@ def build_matrix_data(scope: str = "all", *, today: dt.date | None = None) -> di
         raise ValueError(f"scope must be one of {SCOPES}, got {scope!r}")
 
     transponders, doors, row_of = _transponders_and_doors(
-        "locks", "planned_locks", "groups")
+        "locks", "planned_locks", "groups"
+    )
     marks: dict[str, int] = {}
     for ci, tp in enumerate(transponders):
         active = {lk.serial for lk in tp.locks.all()}
@@ -82,12 +98,17 @@ def build_matrix_data(scope: str = "all", *, today: dt.date | None = None) -> di
                 continue
             marks[f"{ci}-{ri}"] = weight
 
-    return _meta(transponders, doors, mode="matrix", scope=scope,
-                 today=today or dt.date.today(), marks=marks)
+    return _meta(
+        transponders,
+        doors,
+        mode="matrix",
+        scope=scope,
+        today=today or dt.date.today(),
+        marks=marks,
+    )
 
 
-def build_diff_data(*, today: dt.date | None = None,
-                     hide_empty: bool = False) -> dict:
+def build_diff_data(*, today: dt.date | None = None, hide_empty: bool = False) -> dict:
     """Assemble the Soll/Ist (wish vs. configured) diff.
 
     Each non-blank cell maps to ``[weight, wished]``: ``weight`` is the
@@ -101,7 +122,8 @@ def build_diff_data(*, today: dt.date | None = None,
     diff shows only doors that are programmed or in the Soll somewhere.
     """
     transponders, doors, row_of = _transponders_and_doors(
-        "locks", "planned_locks", "desired_locks", "removed_locks", "groups")
+        "locks", "planned_locks", "desired_locks", "removed_locks", "groups"
+    )
     # One pass to read each transponder's sets and collect the doors in use.
     tp_sets = []
     used: set[str] = set()
@@ -124,8 +146,9 @@ def build_diff_data(*, today: dt.date | None = None,
             ri = row_of.get(serial)
             if ri is None:
                 continue
-            weight = ACTIVE if serial in active else (
-                PLANNED if serial in planned else 0)
+            weight = (
+                ACTIVE if serial in active else (PLANNED if serial in planned else 0)
+            )
             wished = 1 if serial in desired else 0
             marks[f"{ci}-{ri}"] = [weight, wished]
             if weight and wished:
@@ -135,9 +158,15 @@ def build_diff_data(*, today: dt.date | None = None,
             else:
                 n_remove += 1
 
-    return _meta(transponders, doors, mode="diff", scope="diff",
-                 today=today or dt.date.today(), marks=marks,
-                 counts={"ok": n_ok, "add": n_add, "remove": n_remove})
+    return _meta(
+        transponders,
+        doors,
+        mode="diff",
+        scope="diff",
+        today=today or dt.date.today(),
+        marks=marks,
+        counts={"ok": n_ok, "add": n_add, "remove": n_remove},
+    )
 
 
 def build_changes_data(*, today: dt.date | None = None) -> dict:
@@ -155,22 +184,30 @@ def build_changes_data(*, today: dt.date | None = None) -> dict:
     unmet wish. Transponders that already match their wish are skipped.
     """
     transponders, doors, _ = _transponders_and_doors(
-        "locks", "planned_locks", "desired_locks")
-    dmeta = {d.serial: {"name": d.door_name or d.serial,
-                        "location": d.location or d.area or "",
-                        "serial": d.serial} for d in doors}
+        "locks", "planned_locks", "desired_locks", "groups"
+    )
+    dmeta = {
+        d.serial: {
+            "name": d.door_name or d.serial,
+            "location": d.location or d.area or "",
+            "serial": d.serial,
+        }
+        for d in doors
+    }
 
     def info(serial):
         # Return a fresh dict per call: entries are mutated per-transponder
         # (the ``note`` below), and the same door appears across many
         # transponders — a shared reference would leak one's note onto all.
         base = dmeta.get(serial)
-        return dict(base) if base else {"name": serial, "location": "",
-                                        "serial": serial}
+        return (
+            dict(base) if base else {"name": serial, "location": "", "serial": serial}
+        )
 
     def ordered(serials):
-        return sorted((info(s) for s in serials),
-                      key=lambda d: (d["location"], d["name"]))
+        return sorted(
+            (info(s) for s in serials), key=lambda d: (d["location"], d["name"])
+        )
 
     changes = []
     tot_add = tot_remove = 0
@@ -184,19 +221,29 @@ def build_changes_data(*, today: dt.date | None = None) -> dict:
         if not adds and not removes:
             continue
         for d in removes:
-            d["note"] = ("geplant" if d["serial"] in planned
-                         and d["serial"] not in active else "")
+            d["note"] = (
+                "geplant"
+                if d["serial"] in planned and d["serial"] not in active
+                else ""
+            )
         tot_add += len(adds)
         tot_remove += len(removes)
-        changes.append({"label": tp.label, "serial": tp.serial,
-                        "asta": tp.asta_number, "add": adds, "remove": removes})
+        changes.append(
+            {
+                "label": tp.label,
+                "serial": tp.serial,
+                "asta": tp.asta_number,
+                "group": combined_group_label(tp.groups.all()),
+                "add": adds,
+                "remove": removes,
+            }
+        )
 
     return {
         "title": "Ausstehende Änderungen",
         "generated": (today or dt.date.today()).isoformat(),
         "mode": "changes",
-        "counts": {"add": tot_add, "remove": tot_remove,
-                   "transponders": len(changes)},
+        "counts": {"add": tot_add, "remove": tot_remove, "transponders": len(changes)},
         "changes": changes,
     }
 
@@ -212,7 +259,8 @@ def render_pdf(data: dict, size: str = "a3") -> bytes:
     if shutil.which("typst") is None:
         raise RuntimeError(
             "The 'typst' binary is not installed — install it (e.g. "
-            "`brew install typst`) to export PDFs.")
+            "`brew install typst`) to export PDFs."
+        )
 
     mode = data.get("mode", "matrix")
     template = CHANGES_TEMPLATE if mode == "changes" else TEMPLATE
@@ -223,18 +271,27 @@ def render_pdf(data: dict, size: str = "a3") -> bytes:
         shutil.copyfile(template, src)
         out = tmp / "out.pdf"
         proc = subprocess.run(
-            ["typst", "compile",
-             "--input", f"size={size}",
-             "--input", f"mode={mode}",
-             str(src), str(out)],
-            capture_output=True, text=True)
+            [
+                "typst",
+                "compile",
+                "--input",
+                f"size={size}",
+                "--input",
+                f"mode={mode}",
+                str(src),
+                str(out),
+            ],
+            capture_output=True,
+            text=True,
+        )
         if proc.returncode != 0:
             raise RuntimeError(f"typst compile failed:\n{proc.stderr.strip()}")
         return out.read_bytes()
 
 
-def export_matrix_pdf(size: str = "a3", scope: str = "all",
-                      mode: str = "matrix", hide_empty: bool = False) -> bytes:
+def export_matrix_pdf(
+    size: str = "a3", scope: str = "all", mode: str = "matrix", hide_empty: bool = False
+) -> bytes:
     """Convenience: build the current DB's matrix (or diff) and render it.
 
     ``hide_empty`` only affects the diff: drop doors with no rights anywhere.

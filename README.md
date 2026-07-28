@@ -81,8 +81,9 @@ per-transponder list printouts, so they are imported conservatively:
 ## Views
 
 - **Overview** — counts, upload, and the list of imported keycards.
-- **Transponders** — every keycard (searchable); a detail page lists the doors
-  it opens, grouped by location.
+- **Transponders** — dashboard cards and the searchable full list show the same
+  compact derived group label for each keycard's target programming; a detail
+  page lists the doors it opens, grouped by location.
 - **Locks** — every door/cylinder (searchable); a detail page lists which
   keycards open it.
 - **Overlap** — the analytical view:
@@ -94,8 +95,8 @@ per-transponder list printouts, so they are imported conservatively:
   aren't provided by any group it belongs to (toggle current vs. planned state).
 - **Soll** — the target ("Soll") editor: a Groups × Doors matrix and reusable
   door-groups; a per-transponder Soll editor distinguishes group-inherited
-  (locked) from individual doors. Exports the reprogramming worklist and the
-  Soll/Ist diff as Typst-rendered PDFs. Hollow-cross (`wird entfernt`) marks
+  (locked) from individual doors. Matrix, Soll/Ist, and reprogramming-worklist
+  PDFs use the same flattened group label. Hollow-cross (`wird entfernt`) marks
   from a matrix show up as pending removals throughout.
 
 ## Authentication
@@ -110,6 +111,9 @@ In production the NixOS module provisions the initial user for you — see
 
 - `Lock` — one physical cylinder, keyed by its SimonsVoss serial
   (door name, room, location, area).
+- `Group` — one atomic reusable door set with a stable export code. Multiple
+  groups assigned to a transponder are flattened to one display/export label;
+  combined groups are not stored as separate records.
 - `Transponder` — one keycard (serial, ASTA number, owner, print date) with a
   many-to-many link to the locks it opens.
 

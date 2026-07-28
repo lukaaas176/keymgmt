@@ -122,8 +122,14 @@
         headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrf()},
         body: JSON.stringify(body),
       });
-      if (!r.ok) throw new Error('save failed');
-      return r.json();
+      if (r.redirected) throw new Error('Sitzung abgelaufen. Bitte neu anmelden.');
+      const contentType = r.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('Unerwartete Serverantwort. Bitte erneut versuchen.');
+      }
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Speichern fehlgeschlagen.');
+      return data;
     }
     // Keep a Soll editor in edit mode across the reload a group edit triggers:
     // set a one-shot flag scoped to THIS path, reload, and let the editor's

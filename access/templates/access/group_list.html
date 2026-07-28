@@ -1,20 +1,24 @@
 {% extends "access/base.html" %}
 {% block title %}Gruppen · Schließmatrix{% endblock %}
 {% block content %}
-<div x-data="{ newGroup: '', async create() {
+<div x-data="{ newGroup: '', newCode: '', async create() {
        const n = this.newGroup.trim(); if (!n) return;
-       const r = await sollPost('{% url 'group_create' %}', {name:n});
-       location.href = '/groups/' + r.id + '/';
-     } }">
+       try {
+         const r = await sollPost('{% url 'group_create' %}',
+                                  {name:n, export_code:this.newCode.trim()});
+         location.href = '/groups/' + r.id + '/';
+       } catch (error) { alert(error.message); }
+      } }">
   <div class="flex flex-wrap items-end justify-between gap-3">
     <div>
       <p class="eyebrow">Ziel-Zustand</p>
       <h1 class="h-title text-3xl mt-1">Gruppen</h1>
       <p class="mt-2 text-slate-500 max-w-2xl">Wiederverwendbare Tür-Sets. Einer Gruppe zugewiesene Transponder erhalten deren Türen im Soll.</p>
     </div>
-    <div class="flex items-center gap-2">
-      <form @submit.prevent="create()" class="flex items-center gap-1.5">
-        <input x-model="newGroup" placeholder="Neue Gruppe…" class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm">
+    <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+      <form @submit.prevent="create()" class="flex w-full flex-wrap items-center gap-1.5 sm:w-auto">
+        <input x-model="newGroup" placeholder="Neue Gruppe…" class="min-w-0 flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm sm:flex-none">
+        <input x-model="newCode" maxlength="4" placeholder="Code (optional)" class="w-32 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm font-mono uppercase">
         <button class="btn-primary !py-1.5">+ Gruppe</button>
       </form>
       <a href="{% url 'soll_matrix' %}" class="btn-ghost">Zur Matrix</a>
@@ -26,6 +30,7 @@
     <a href="{% url 'group_detail' g.pk %}" class="card p-5 hover:ring-slate-300 transition group">
       <p class="font-medium text-slate-900 group-hover:text-indigo-600">{{ g.name }}</p>
       <div class="mt-2 flex gap-2 text-xs text-slate-400">
+        <span class="chip">{{ g.export_code }}</span>
         <span class="chip">{{ g.n }} Tür{{ g.n|pluralize:"en" }}</span>
         <span class="chip">{{ g.m }} Transponder</span>
       </div>
