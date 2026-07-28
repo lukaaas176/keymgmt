@@ -16,8 +16,8 @@ def _sqlite_pragmas(sender, connection, **kwargs):
 
 
 class AccessConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'access'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "access"
 
     def ready(self):
         connection_created.connect(_sqlite_pragmas)

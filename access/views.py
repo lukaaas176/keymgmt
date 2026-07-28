@@ -3,6 +3,7 @@ import logging
 import os
 import tempfile
 from collections import defaultdict
+from typing import TypedDict
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
@@ -28,6 +29,18 @@ from .services import import_pdf
 
 ACCENT_RGB = "79,70,229"  # indigo-600, used for heatmap intensity
 logger = logging.getLogger(__name__)
+
+
+class _CloneGroup(TypedDict):
+    transponders: list[Transponder]
+    doors: int
+
+
+class _AccessTier(TypedDict):
+    holders: list[str]
+    holder_count: int
+    locks: list[Lock]
+    lock_count: int
 
 
 # --- domain data transfer ---------------------------------------------------
@@ -215,7 +228,7 @@ def access_report(request):
         {
             "report": report,
             "markdown": pdf_export.render_access_report_markdown(report),
-            "nav": "soll",
+            "nav": "groups",
         },
     )
 
@@ -585,7 +598,7 @@ def overlap(request):
     # Read the door sets from the prefetch cache (.all(), not .values_list /
     # .exists(), which re-query per transponder), and derive planned_pending in the
     # same pass.
-    sets = {}
+    sets: dict[str, set[str]] = {}
     planned_pending = False
     for tp in tps:
         active_doors = {lk.serial for lk in tp.locks.all()}
@@ -622,12 +635,12 @@ def overlap(request):
     # sets: transponders that share "no access" (e.g. no pending change under
     # scope=diff) are not a meaningful group. Carry the scoped door count so
     # the template need not fall back to the (scope-blind) active .locks.
-    by_set = defaultdict(list)
+    by_set: defaultdict[frozenset[str], list[Transponder]] = defaultdict(list)
     for tp in tps:
         doors = sets[tp.serial]
         if doors:
             by_set[frozenset(doors)].append(tp)
-    clone_groups = [
+    clone_groups: list[_CloneGroup] = [
         {"transponders": g, "doors": len(dset)}
         for dset, g in by_set.items()
         if len(g) > 1
@@ -637,15 +650,15 @@ def overlap(request):
     # Locks grouped by the exact set of holders (in scope) -> tiers. Invert
     # the scoped door-sets so a planned view reflects planned holders too.
     all_locks = {lk.serial: lk for lk in Lock.objects.all()}
-    holders_by_lock = defaultdict(set)
+    holders_by_lock: defaultdict[str, set[str]] = defaultdict(set)
     for tp in tps:
         for lock_serial in sets[tp.serial]:
             holders_by_lock[lock_serial].add(tp.serial)
-    by_holders = defaultdict(list)
+    by_holders: defaultdict[frozenset[str], list[Lock]] = defaultdict(list)
     for lock_serial, holders in holders_by_lock.items():
         by_holders[frozenset(holders)].append(all_locks[lock_serial])
     name = {tp.serial: tp.label for tp in tps}
-    tiers = []
+    tiers: list[_AccessTier] = []
     for holders, locks in by_holders.items():
         tiers.append(
             {
@@ -1027,7 +1040,9 @@ def group_list(request):
     groups = Group.objects.annotate(
         n=Count("doors", distinct=True), m=Count("transponders", distinct=True)
     ).order_by("name")
-    return render(request, "access/group_list.html", {"groups": groups, "nav": "soll"})
+    return render(
+        request, "access/group_list.html", {"groups": groups, "nav": "groups"}
+    )
 
 
 @ensure_csrf_cookie
@@ -1051,6 +1066,6 @@ def group_detail(request, pk):
             "members": group.transponders.order_by(
                 "asta_number", "person_name", "serial"
             ),
-            "nav": "soll",
+            "nav": "groups",
         },
     )

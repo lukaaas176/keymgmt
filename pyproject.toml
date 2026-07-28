@@ -15,3 +15,18 @@ server = [
     "gunicorn>=21.2",
     "pillow>=10",
 ]
+
+[tool.ty.rules]
+# Django injects model managers and relation descriptors at runtime; ty does
+# not currently apply Django's model metaclass transformations.
+unresolved-attribute = "ignore"
+
+[tool.ruff]
+extend-exclude = ["access/migrations", "docs/superpowers"]
+
+[tool.ruff.lint.per-file-ignores]
+# Django expects mutable declarative metadata on these class bodies.
+"access/forms.py" = ["RUF012"]
+"access/models.py" = ["RUF012"]
+# These are immutable test fixtures despite using mutable container syntax.
+"access/tests.py" = ["RUF012"]

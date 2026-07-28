@@ -24,13 +24,18 @@ from access.services import match_known_serial, match_lock_by_name
 
 
 class Command(BaseCommand):
-    help = ("Store hollow-cross (pending-removal) doors from a native matrix "
-            "PDF into Transponder.removed_locks.")
+    help = (
+        "Store hollow-cross (pending-removal) doors from a native matrix "
+        "PDF into Transponder.removed_locks."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument("pdf", help="native matrix PDF, e.g. ASTA-2026.pdf")
-        parser.add_argument("--dry-run", action="store_true",
-                            help="report what would change, write nothing")
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="report what would change, write nothing",
+        )
 
     def handle(self, *args, **opts):
         path = opts["pdf"]
@@ -81,15 +86,22 @@ class Command(BaseCommand):
         total = sum(len(v) for v in removed.values())
         self.stdout.write(
             f"hollow crosses: {n_hollow} → {len(removed)} transponders, "
-            f"{total} removed-door grants (unmapped skipped: {skipped})")
+            f"{total} removed-door grants (unmapped skipped: {skipped})"
+        )
         if unmatched_cols:
-            self.stdout.write(self.style.WARNING(
-                f"columns without a transponder: {len(unmatched_cols)} "
-                f"{unmatched_cols[:5]}"))
+            self.stdout.write(
+                self.style.WARNING(
+                    f"columns without a transponder: {len(unmatched_cols)} "
+                    f"{unmatched_cols[:5]}"
+                )
+            )
         if unmatched_rows:
-            self.stdout.write(self.style.WARNING(
-                f"door rows without a lock: {len(unmatched_rows)} "
-                f"{unmatched_rows[:5]}"))
+            self.stdout.write(
+                self.style.WARNING(
+                    f"door rows without a lock: {len(unmatched_rows)} "
+                    f"{unmatched_rows[:5]}"
+                )
+            )
 
         if opts["dry_run"]:
             self.stdout.write("dry-run — nothing written.")
@@ -100,7 +112,10 @@ class Command(BaseCommand):
             Transponder.removed_locks.through.objects.all().delete()
             for serial, lockset in removed.items():
                 Transponder.objects.get(serial=serial).removed_locks.set(
-                    Lock.objects.filter(serial__in=lockset))
-        self.stdout.write(self.style.SUCCESS(
-            f"Wrote removed_locks for {len(removed)} transponders "
-            f"({total} grants)."))
+                    Lock.objects.filter(serial__in=lockset)
+                )
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Wrote removed_locks for {len(removed)} transponders ({total} grants)."
+            )
+        )

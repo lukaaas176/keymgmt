@@ -328,6 +328,19 @@ class AccessReportViewTests(TestCase):
             html=True,
         )
 
+    def test_group_list_header_links_to_and_highlights_groups(self):
+        response = self.client.get("/groups/")
+
+        self.assertContains(response, "data-groups-link", count=2)
+        self.assertContains(
+            response,
+            '<a href="/groups/" data-groups-link class="nav-link nav-active">Gruppen</a>',
+            count=2,
+            html=True,
+        )
+        self.assertContains(response, "hidden xl:flex", count=1)
+        self.assertContains(response, "xl:hidden", count=2)
+
     def test_pdf_endpoint_uses_safe_server_filename(self):
         with mock.patch.object(
             pdf_export, "export_access_report_pdf", return_value=b"%PDF report"

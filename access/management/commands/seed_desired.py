@@ -18,19 +18,25 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--overwrite", action="store_true",
-            help="also reset transponders that already have a curated wish")
+            "--overwrite",
+            action="store_true",
+            help="also reset transponders that already have a curated wish",
+        )
 
     @transaction.atomic
     def handle(self, *args, **opts):
         seeded = skipped = 0
         for tp in Transponder.objects.prefetch_related(
-                "locks", "planned_locks", "desired_locks"):
+            "locks", "planned_locks", "desired_locks"
+        ):
             if tp.desired_locks.exists() and not opts["overwrite"]:
                 skipped += 1
                 continue
             tp.desired_locks.set(list(tp.locks.all()) + list(tp.planned_locks.all()))
             seeded += 1
-        self.stdout.write(self.style.SUCCESS(
-            f"Seeded {seeded} transponder(s); skipped {skipped} with an "
-            f"existing wish (use --overwrite to reset those)."))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Seeded {seeded} transponder(s); skipped {skipped} with an "
+                f"existing wish (use --overwrite to reset those)."
+            )
+        )

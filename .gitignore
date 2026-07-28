@@ -27,6 +27,7 @@ result-*
 
 # Scratch
 /scratchpad/
+/docs/
 
 # Large UI screenshot — may show real access data; keep it out of a pushed repo
 screenshot.png

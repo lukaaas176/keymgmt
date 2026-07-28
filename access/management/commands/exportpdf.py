@@ -16,16 +16,35 @@ class Command(BaseCommand):
     help = "Export the locking matrix to a tiled PDF via Typst."
 
     def add_arguments(self, parser):
-        parser.add_argument("-o", "--output", default="matrix.pdf",
-                            help="output .pdf path (default: matrix.pdf)")
-        parser.add_argument("--size", choices=pdf_export.SIZES, default="a3",
-                            help="page size (default: a3)")
-        parser.add_argument("--scope", choices=pdf_export.SCOPES, default="all",
-                            help="matrix marks to include (default: all)")
-        parser.add_argument("--mode", choices=pdf_export.MODES, default="matrix",
-                            help="'matrix' or 'diff' (Soll/Ist comparison)")
-        parser.add_argument("--hide-empty", action="store_true",
-                            help="diff only: drop doors with no rights anywhere")
+        parser.add_argument(
+            "-o",
+            "--output",
+            default="matrix.pdf",
+            help="output .pdf path (default: matrix.pdf)",
+        )
+        parser.add_argument(
+            "--size",
+            choices=pdf_export.SIZES,
+            default="a3",
+            help="page size (default: a3)",
+        )
+        parser.add_argument(
+            "--scope",
+            choices=pdf_export.SCOPES,
+            default="all",
+            help="matrix marks to include (default: all)",
+        )
+        parser.add_argument(
+            "--mode",
+            choices=pdf_export.MODES,
+            default="matrix",
+            help="'matrix' or 'diff' (Soll/Ist comparison)",
+        )
+        parser.add_argument(
+            "--hide-empty",
+            action="store_true",
+            help="diff only: drop doors with no rights anywhere",
+        )
 
     def handle(self, *args, **opts):
         try:
@@ -42,13 +61,23 @@ class Command(BaseCommand):
             fh.write(pdf)
         if opts["mode"] == "changes":
             c = data["counts"]
-            summary = (f"{c['transponders']} Transponder betroffen, "
-                       f"+{c['add']} / -{c['remove']} Änderungen")
+            summary = (
+                f"{c['transponders']} Transponder betroffen, "
+                f"+{c['add']} / -{c['remove']} Änderungen"
+            )
         else:
-            tail = ("diff (Soll/Ist)" if opts["mode"] == "diff"
-                    else f"scope={opts['scope']}")
-            summary = (f"{len(data['transponders'])} Transponder × "
-                       f"{len(data['doors'])} doors, {tail}")
-        self.stdout.write(self.style.SUCCESS(
-            f"Wrote {opts['output']} — {summary}, {opts['size'].upper()} "
-            f"({len(pdf)} bytes)."))
+            tail = (
+                "diff (Soll/Ist)"
+                if opts["mode"] == "diff"
+                else f"scope={opts['scope']}"
+            )
+            summary = (
+                f"{len(data['transponders'])} Transponder × "
+                f"{len(data['doors'])} doors, {tail}"
+            )
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Wrote {opts['output']} — {summary}, {opts['size'].upper()} "
+                f"({len(pdf)} bytes)."
+            )
+        )

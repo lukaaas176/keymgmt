@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal, TypedDict
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -50,6 +50,15 @@ class ImportResult:
     updated_groups: int
     created_transponders: int
     updated_transponders: int
+
+
+class ParsedBackup(TypedDict):
+    format: str
+    version: int
+    exported_at: datetime
+    locks: list[dict[str, Any]]
+    groups: list[dict[str, Any]]
+    transponders: list[dict[str, Any]]
 
 
 def _datetime_text(value: datetime) -> str:
@@ -289,7 +298,7 @@ def _reject_duplicate(records: list[dict], field: str, label: str, *, fold=False
         seen.add(key)
 
 
-def _validate_imported_references(backup: dict) -> None:
+def _validate_imported_references(backup: ParsedBackup) -> None:
     lock_serials = {record["serial"] for record in backup["locks"]}
     group_codes = {record["export_code"] for record in backup["groups"]}
     lock_fields = (
@@ -316,7 +325,7 @@ def _validate_imported_references(backup: dict) -> None:
 
 def parse_backup(
     content: bytes, *, allow_external_references: bool = False
-) -> dict[str, object]:
+) -> ParsedBackup:
     if not content:
         raise BackupValidationError("Die Sicherungsdatei ist leer.")
     if len(content) > MAX_BACKUP_BYTES:
@@ -342,7 +351,7 @@ def parse_backup(
     if root["version"] != FORMAT_VERSION or isinstance(root["version"], bool):
         raise BackupValidationError("Diese Sicherungsversion wird nicht unterstützt.")
 
-    backup = {
+    backup: ParsedBackup = {
         "format": FORMAT_NAME,
         "version": FORMAT_VERSION,
         "exported_at": _datetime(root["exported_at"], "exported_at"),
@@ -373,7 +382,7 @@ def parse_backup(
 
 
 def _set_relationships(
-    backup: dict,
+    backup: ParsedBackup,
     locks_by_serial: dict[str, Lock],
     groups_by_code: dict[str, Group],
     transponders_by_serial: dict[str, Transponder],
@@ -397,7 +406,7 @@ def _set_relationships(
         transponder.groups.set(groups_by_code[code] for code in record["groups"])
 
 
-def _replace_backup(backup: dict) -> ImportResult:
+def _replace_backup(backup: ParsedBackup) -> ImportResult:
     Transponder.objects.all().delete()
     Group.objects.all().delete()
     Lock.objects.all().delete()
@@ -445,7 +454,7 @@ def _replace_backup(backup: dict) -> ImportResult:
 
 
 def _validate_merge_references(
-    backup: dict,
+    backup: ParsedBackup,
     locks_by_serial: dict[str, Lock],
     groups_by_code: dict[str, Group],
     groups_by_name: dict[str, Group],
@@ -485,7 +494,7 @@ def _validate_merge_references(
             )
 
 
-def _merge_backup(backup: dict) -> ImportResult:
+def _merge_backup(backup: ParsedBackup) -> ImportResult:
     existing_locks = list(Lock.objects.select_for_update())
     existing_groups = list(Group.objects.select_for_update())
     existing_transponders = list(Transponder.objects.select_for_update())

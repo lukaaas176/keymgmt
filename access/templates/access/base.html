@@ -8,15 +8,15 @@
   <script>
     tailwind.config = { theme: { extend: {
       fontFamily: {
-        display: ['"Space Grotesk"','ui-sans-serif','system-ui','sans-serif'],
-        sans: ['Inter','ui-sans-serif','system-ui','sans-serif'],
+        display: ['Archivo','ui-sans-serif','system-ui','sans-serif'],
+        sans: ['"Source Sans 3"','ui-sans-serif','system-ui','sans-serif'],
         mono: ['"JetBrains Mono"','ui-monospace','SFMono-Regular','monospace'],
       },
     }}}
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <style type="text/tailwindcss">
     body { @apply font-sans antialiased text-slate-700 bg-slate-50; }
@@ -53,13 +53,14 @@
           </span>
           <span class="font-display text-lg font-semibold tracking-tight text-slate-900">Schließmatrix</span>
         </a>
-        <nav class="hidden md:flex items-center gap-1">
+        <nav class="hidden xl:flex items-center gap-1">
           <a href="{% url 'dashboard' %}" class="nav-link {% if nav == 'dashboard' %}nav-active{% endif %}">Übersicht</a>
           <a href="{% url 'transponder_list' %}" class="nav-link {% if nav == 'transponders' %}nav-active{% endif %}">Transponder</a>
           <a href="{% url 'lock_list' %}" class="nav-link {% if nav == 'locks' %}nav-active{% endif %}">Türen</a>
           <a href="{% url 'overlap' %}" class="nav-link {% if nav == 'overlap' %}nav-active{% endif %}">Überschneidung</a>
           <a href="{% url 'individual_access' %}" class="nav-link {% if nav == 'individual' %}nav-active{% endif %}">Individuell</a>
           <a href="{% url 'soll_matrix' %}" class="nav-link {% if nav == 'soll' %}nav-active{% endif %}">Soll</a>
+          <a href="{% url 'group_list' %}" data-groups-link class="nav-link {% if nav == 'groups' %}nav-active{% endif %}">Gruppen</a>
           <a href="{% url 'data_page' %}" data-page-link class="nav-link {% if nav == 'data' %}nav-active{% endif %}">Daten</a>
           {% if user.is_authenticated %}
           <form method="post" action="{% url 'logout' %}" class="ml-1 pl-1 border-l border-slate-200">{% csrf_token %}
@@ -67,17 +68,18 @@
           </form>
           {% endif %}
         </nav>
-        <button class="md:hidden p-2 -mr-2 text-slate-600" @click="open=!open" aria-label="Menu">
+        <button class="xl:hidden p-2 -mr-2 text-slate-600" @click="open=!open" aria-label="Menu">
           <svg class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
         </button>
       </div>
-      <nav class="md:hidden pb-3 grid gap-1" x-show="open" x-transition style="display:none">
+      <nav class="xl:hidden pb-3 grid gap-1" x-show="open" x-transition style="display:none">
         <a href="{% url 'dashboard' %}" class="nav-link {% if nav == 'dashboard' %}nav-active{% endif %}">Übersicht</a>
         <a href="{% url 'transponder_list' %}" class="nav-link {% if nav == 'transponders' %}nav-active{% endif %}">Transponder</a>
         <a href="{% url 'lock_list' %}" class="nav-link {% if nav == 'locks' %}nav-active{% endif %}">Türen</a>
         <a href="{% url 'overlap' %}" class="nav-link {% if nav == 'overlap' %}nav-active{% endif %}">Überschneidung</a>
         <a href="{% url 'individual_access' %}" class="nav-link {% if nav == 'individual' %}nav-active{% endif %}">Individuell</a>
         <a href="{% url 'soll_matrix' %}" class="nav-link {% if nav == 'soll' %}nav-active{% endif %}">Soll</a>
+        <a href="{% url 'group_list' %}" data-groups-link class="nav-link {% if nav == 'groups' %}nav-active{% endif %}">Gruppen</a>
         <a href="{% url 'data_page' %}" data-page-link class="nav-link {% if nav == 'data' %}nav-active{% endif %}">Daten</a>
         {% if user.is_authenticated %}
         <form method="post" action="{% url 'logout' %}">{% csrf_token %}

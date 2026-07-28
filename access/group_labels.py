@@ -50,7 +50,7 @@ def derive_export_code(name: str, used_codes: Iterable[str]) -> str:
 
 
 def combined_group_label(groups: Iterable[Group]) -> str:
-    ordered = sorted(groups, key=lambda group: group.name.casefold())
+    ordered = sorted(groups, key=lambda group: str(group.name).casefold())
     if not ordered:
         return ""
     displayed = (
@@ -58,7 +58,7 @@ def combined_group_label(groups: Iterable[Group]) -> str:
         if len(ordered) > 1
         else ordered
     )
-    codes = [group.export_code for group in displayed]
+    codes = [str(group.export_code) for group in displayed]
     suffix = (
         "".join(codes) if all(len(code) == 1 for code in codes) else "-".join(codes)
     )

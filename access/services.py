@@ -36,8 +36,7 @@ def _as_date(iso: str | None):
         return None
 
 
-def import_pdf(path: str, source_name: str, *,
-               include_removed: bool = True) -> dict:
+def import_pdf(path: str, source_name: str, *, include_removed: bool = True) -> dict:
     """Detect the format of the file at `path` and import it.
 
     PDFs may be list or matrix printouts (auto-detected); images
@@ -58,9 +57,9 @@ def import_pdf(path: str, source_name: str, *,
         if ocr.is_native_matrix_pdf(path):
             return _import_matrix(
                 ocr.parse_native_matrix(path, include_removed=include_removed),
-                source_name)
-        return _import_matrix(matrix_parser.parse_matrix_pdf(path),
-                              source_name)
+                source_name,
+            )
+        return _import_matrix(matrix_parser.parse_matrix_pdf(path), source_name)
     return _import_list(path, source_name)
 
 
@@ -74,13 +73,19 @@ def _import_list(path: str, source_name: str) -> dict:
         # Only fill blank lock fields; never overwrite metadata another
         # source already set with this printout's (possibly empty or
         # truncated) value.
-        defaults = {k: v for k, v in (
-            ("door_name", (a.door_name or "").strip()[:255]),
-            ("room_number", (a.room_number or "").strip()[:64]),
-            ("location", (a.location or "").strip()[:64]),
-            ("area", (a.area or "").strip()[:64])) if v}
+        defaults = {
+            k: v
+            for k, v in (
+                ("door_name", (a.door_name or "").strip()[:255]),
+                ("room_number", (a.room_number or "").strip()[:64]),
+                ("location", (a.location or "").strip()[:64]),
+                ("area", (a.area or "").strip()[:64]),
+            )
+            if v
+        }
         obj, was_new = Lock.objects.get_or_create(
-            serial=a.lock_serial, defaults=defaults)
+            serial=a.lock_serial, defaults=defaults
+        )
         if not was_new:
             changed = False
             for field, value in defaults.items():
@@ -125,8 +130,7 @@ def match_known_serial(serial: str, known: set[str]) -> str | None:
     """
     if serial in known:
         return serial
-    candidates = [k for k in known
-                  if matrix_parser.lookalike_equal(serial, k)]
+    candidates = [k for k in known if matrix_parser.lookalike_equal(serial, k)]
     return candidates[0] if len(candidates) == 1 else None
 
 
@@ -157,8 +161,7 @@ def _edit_distance(a: str, b: str, cap: int = 3) -> int:
     for i, ca in enumerate(a, 1):
         cur = [i]
         for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[-1] + 1,
-                           prev[j - 1] + (ca != cb)))
+            cur.append(min(prev[j] + 1, cur[-1] + 1, prev[j - 1] + (ca != cb)))
         if min(cur) >= cap:
             return cap
         prev = cur
@@ -181,12 +184,42 @@ def _door_digits(name: str) -> str:
 # swaps between these (Ost<->West) sit only 1-2 edits apart, so plain edit
 # distance would wrongly merge 'Raum 0321 Ost' into 'Raum 0321 West'.
 _ORIENT = {
-    "ost", "west", "nord", "sued", "sud", "no", "nw", "so", "sw",
-    "nordost", "nordwest", "suedost", "suedwest", "sudost", "sudwest",
-    "links", "rechts", "mitte", "oben", "unten", "innen", "aussen",
+    "ost",
+    "west",
+    "nord",
+    "sued",
+    "sud",
+    "no",
+    "nw",
+    "so",
+    "sw",
+    "nordost",
+    "nordwest",
+    "suedost",
+    "suedwest",
+    "sudost",
+    "sudwest",
+    "links",
+    "rechts",
+    "mitte",
+    "oben",
+    "unten",
+    "innen",
+    "aussen",
 }
-_ORIENT_SUFFIX = ("nordost", "nordwest", "suedost", "suedwest",
-                  "sudost", "sudwest", "ost", "west", "nord", "sued", "sud")
+_ORIENT_SUFFIX = (
+    "nordost",
+    "nordwest",
+    "suedost",
+    "suedwest",
+    "sudost",
+    "sudwest",
+    "ost",
+    "west",
+    "nord",
+    "sued",
+    "sud",
+)
 
 
 def _door_sides(name: str) -> frozenset[str]:
@@ -200,12 +233,12 @@ def _door_sides(name: str) -> frozenset[str]:
     out = set()
     for t in re.findall(r"[a-z0-9]+", s):
         if len(t) == 1 and t.isalpha():
-            out.add(t)                       # sub-door tag: A / B / O / W
+            out.add(t)  # sub-door tag: A / B / O / W
         elif t in _ORIENT:
             out.add(t)
-        else:                                # orientation glued to a number
-            for o in _ORIENT_SUFFIX:         # e.g. '0321ost'
-                if t.endswith(o) and t[:-len(o)].isdigit():
+        else:  # orientation glued to a number
+            for o in _ORIENT_SUFFIX:  # e.g. '0321ost'
+                if t.endswith(o) and t[: -len(o)].isdigit():
                     out.add(o)
                     break
     return frozenset(out)
@@ -238,20 +271,23 @@ def match_lock_by_name(name: str, locks) -> Lock | None:
         return None
     digits = _door_digits(name)
     sides = _door_sides(name)
-    scored = [(_edit_distance(key, nk), lk)
-              for lk, nk in norm.items()
-              if _door_digits(lk.door_name) == digits
-              and _door_sides(lk.door_name) == sides]
+    scored = [
+        (_edit_distance(key, nk), lk)
+        for lk, nk in norm.items()
+        if _door_digits(lk.door_name) == digits and _door_sides(lk.door_name) == sides
+    ]
     scored.sort(key=lambda t: t[0])
-    if scored and scored[0][0] <= 2 and (
-            len(scored) == 1 or scored[1][0] > scored[0][0]):
+    if (
+        scored
+        and scored[0][0] <= 2
+        and (len(scored) == 1 or scored[1][0] > scored[0][0])
+    ):
         return scored[0][1]
     return None
 
 
 @transaction.atomic
-def _import_matrix(data: "matrix_parser.MatrixResult",
-                   source_name: str) -> dict:
+def _import_matrix(data: matrix_parser.MatrixResult, source_name: str) -> dict:
     """Import one parsed Schließmatrix (fills gaps, never overwrites)."""
     warnings = list(data.warnings)
 
@@ -268,14 +304,16 @@ def _import_matrix(data: "matrix_parser.MatrixResult",
     doors_matched_fuzzy: list[tuple[str, str]] = []
     for d in data.doors:
         lk = match_lock_by_name(d.name, existing_locks)
-        if lk is not None and lk.door_name.casefold() != d.name.casefold():
-            doors_matched_fuzzy.append((d.name, lk.door_name))
+        if lk is not None and str(lk.door_name).casefold() != d.name.casefold():
+            doors_matched_fuzzy.append((d.name, str(lk.door_name)))
         if lk is None:
             lk, was_new = Lock.objects.get_or_create(
                 serial=_matrix_lock_serial(d.name),
-                defaults={"door_name": d.name,
-                          "room_number": d.room_number,
-                          "location": d.floor},
+                defaults={
+                    "door_name": d.name,
+                    "room_number": d.room_number,
+                    "location": d.floor,
+                },
             )
             doors_created += was_new
         lock_by_row[d.row] = lk
@@ -319,11 +357,13 @@ def _import_matrix(data: "matrix_parser.MatrixResult",
             skipped.append(p.raw_serial)
             warnings.append(
                 f"column {p.column}: unreadable serial {p.raw_serial!r} "
-                f"({p.person_name or 'no name'}) — not imported")
+                f"({p.person_name or 'no name'}) — not imported"
+            )
             continue
 
         tp, was_created = Transponder.objects.get_or_create(
-            serial=serial, defaults={"source_file": source_name})
+            serial=serial, defaults={"source_file": source_name}
+        )
         changed = False
         if p.asta_number is not None and tp.asta_number is None:
             tp.asta_number = p.asta_number
@@ -352,8 +392,7 @@ def _import_matrix(data: "matrix_parser.MatrixResult",
             # A planned grant that is already active (in this matrix or from
             # an earlier import) needs no second, pending listing.
             already_active = set(tp.locks.all())
-            tp.planned_locks.add(*[lk for lk in planned
-                                   if lk not in already_active])
+            tp.planned_locks.add(*[lk for lk in planned if lk not in already_active])
             tp.removed_locks.remove(*planned)
         if removed:
             # Hollow × — still programmed but withdrawn (pending removal).
@@ -361,10 +400,10 @@ def _import_matrix(data: "matrix_parser.MatrixResult",
             tp.locks.remove(*removed)
             tp.planned_locks.remove(*removed)
 
-    n_active = sum(1 for k in data.marks
-                   if data.mark_states.get(k, "active") == "active")
-    n_removed = sum(1 for k in data.marks
-                    if data.mark_states.get(k) == "remove")
+    n_active = sum(
+        1 for k in data.marks if data.mark_states.get(k, "active") == "active"
+    )
+    n_removed = sum(1 for k in data.marks if data.mark_states.get(k) == "remove")
     return {
         "format": "matrix",
         "persons": len(data.persons),

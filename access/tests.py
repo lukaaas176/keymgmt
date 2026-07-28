@@ -14,14 +14,17 @@ Two fixture sources:
 
 import io
 import os
+import shutil
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
+from django.utils import translation
 
 from . import ocr, services
 from .group_labels import (
@@ -52,7 +55,6 @@ TOCHECK = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "to_chec
 HAVE_TOCHECK = os.path.isdir(TOCHECK) and os.path.exists(
     os.path.join(TOCHECK, "Lukas.pdf")
 )
-import shutil
 
 HAVE_TYPST = shutil.which("typst") is not None
 ASTA_PDF = os.path.abspath(
@@ -75,7 +77,7 @@ def _esc(text: str) -> str:
         if ch in "()\\":
             out.append("\\" + ch)
         elif ord(ch) > 126:
-            out.append("\\%03o" % ord(ch.encode("latin-1")))
+            out.append(f"\\{ord(ch.encode('latin-1')):03o}")
         else:
             out.append(ch)
     return "".join(out)
@@ -1352,7 +1354,7 @@ def _csv_marks(path):
     def norm(s):
         return _re.sub(r"\s+", " ", (s or "").strip()).casefold()
 
-    txt = open(path, "rb").read().decode("utf-16")
+    txt = Path(path).read_bytes().decode("utf-16")
     txt = txt.replace("\r\n", "\n").replace("\r", "\n")
     rows = list(_csv.reader(io.StringIO(txt), delimiter=";"))
     ncol = max(len(r) for r in rows)
@@ -2156,6 +2158,15 @@ class OverlapScopeTests(TestCase):
         self.assertEqual(self._pct(active), 50)
         self.assertEqual(self._pct(planned), 100)
 
+    def test_heatmap_alpha_is_not_localized(self):
+        Transponder.objects.create(serial="CCC3333", person_name="C")
+
+        with translation.override("de"):
+            response = self.client.get("/overlap/")
+
+        self.assertContains(response, "rgba(79,70,229, 0.08)")
+        self.assertNotContains(response, "rgba(79,70,229, 0,08)")
+
     def test_diff_scope_uses_only_planned(self):
         r = self.client.get("/overlap/?scope=diff")
         self.assertEqual(r.context["scope"], "diff")
@@ -2362,7 +2373,7 @@ class InheritedAndIndividualTests(TestCase):
     def test_import_matrix_routes_hollow_to_removed(self):
         # A synthetic matrix with one hollow (remove) mark lands in removed_locks,
         # not in active/planned.
-        from access import services, ocr
+        from access import ocr, services
 
         res = ocr.MatrixResult(source_file="x.pdf", ocr_scan=True)
         res.persons.append(
@@ -2412,7 +2423,7 @@ class InheritedAndIndividualTests(TestCase):
         self.assertNotIn("RRR", cols["Wird entfernt"])
 
     def test_import_reactivation_clears_removed(self):
-        from access import services, ocr
+        from access import ocr, services
 
         tp = Transponder.objects.create(serial="YYY")
         tp.removed_locks.add(self.L[0])  # prior hollow ×

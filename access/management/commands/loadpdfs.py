@@ -22,17 +22,17 @@ class Command(BaseCommand):
     help = "Import all SimonsVoss printouts (PDFs/images) found in a directory."
 
     def add_arguments(self, parser):
-        parser.add_argument("directory",
-                            help="folder containing printout PDFs/images")
+        parser.add_argument("directory", help="folder containing printout PDFs/images")
 
     def handle(self, *args, **opts):
         directory = opts["directory"]
         if not os.path.isdir(directory):
             raise CommandError(f"not a directory: {directory}")
         paths = sorted(
-            os.path.join(directory, e) for e in os.listdir(directory)
-            if _importable(e)
-            and (not ocr.is_image(e) or ocr.tesseract_available()))
+            os.path.join(directory, e)
+            for e in os.listdir(directory)
+            if _importable(e) and (not ocr.is_image(e) or ocr.tesseract_available())
+        )
         if not paths:
             raise CommandError(f"no importable files in {directory}")
         for path in paths:
@@ -46,17 +46,20 @@ class Command(BaseCommand):
             if r["format"] == "matrix":
                 extra = ""
                 if r["corrected"]:
-                    extra += "".join(f"\n      serial {a} matched to known {b}"
-                                     for a, b in r["corrected"])
+                    extra += "".join(
+                        f"\n      serial {a} matched to known {b}"
+                        for a, b in r["corrected"]
+                    )
                 self.stdout.write(
                     f"  {name:16} matrix     {r['persons']:3} transponders "
                     f"({r['created']} new), {r['doors']} doors, "
-                    f"{r['marks']} grants{flag}{extra}")
+                    f"{r['marks']} grants{flag}{extra}"
+                )
                 for w in r["warnings"]:
                     self.stderr.write(self.style.WARNING(f"      {w}"))
             else:
                 verb = "added" if r["created"] else "updated"
                 self.stdout.write(
-                    f"  {name:16} {r['serial']:10} {verb:7} "
-                    f"{r['parsed']:3} doors{flag}")
+                    f"  {name:16} {r['serial']:10} {verb:7} {r['parsed']:3} doors{flag}"
+                )
         self.stdout.write(self.style.SUCCESS(f"Imported {len(paths)} file(s)."))

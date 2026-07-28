@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 parse_transponder_pdfs.py
 =========================
@@ -51,8 +50,8 @@ import pdfplumber
 
 # --- Labels and patterns that appear verbatim in the printouts -------------
 
-LABEL_LOCK = "Schließanlage:"            # locking system grouping header
-LABEL_LOC = "Standort.Gebäude.Etage:"   # location grouping header (Site.Building.Floor)
+LABEL_LOCK = "Schließanlage:"  # locking system grouping header
+LABEL_LOC = "Standort.Gebäude.Etage:"  # location grouping header (Site.Building.Floor)
 HDR_TOKENS = {"Raumnummer", "Seriennummer", "Bereich"}  # column-header row markers
 
 # "ASTA 51 Justus, Rossmeier / 02UA77F"  ->  ('51', 'Justus, Rossmeier', '02UA77F')
@@ -65,30 +64,33 @@ RE_PRINTED = re.compile(r"Ausdruck vom:\s*(\d{2}\.\d{2}\.\d{4})")
 
 # --- Parsed structures -----------------------------------------------------
 
+
 @dataclass
 class Authorization:
     """One door a transponder may open (a lock cylinder + its placement)."""
+
     door_name: str
     room_number: str
-    lock_serial: str        # SimonsVoss serial, unique per physical lock
-    area: str               # Bereich
-    location: str           # Standort.Gebäude.Etage
-    locking_system: str     # Schließanlage
+    lock_serial: str  # SimonsVoss serial, unique per physical lock
+    area: str  # Bereich
+    location: str | None  # Standort.Gebäude.Etage
+    locking_system: str | None  # Schließanlage
 
 
 @dataclass
 class Transponder:
-    serial: str                         # e.g. '010A0SC' (the transponder)
+    serial: str  # e.g. '010A0SC' (the transponder)
     asta_number: int | None = None
     person_name: str | None = None
     locking_system: str | None = None
-    printed_on: str | None = None       # ISO date string
-    record_count: int | None = None     # stated "Anzahl der Datensätze"
+    printed_on: str | None = None  # ISO date string
+    record_count: int | None = None  # stated "Anzahl der Datensätze"
     source_file: str = ""
     authorizations: list[Authorization] = field(default_factory=list)
 
 
 # --- Geometry helpers ------------------------------------------------------
+
 
 def _cluster_lines(words, tol: float = 3.0):
     """Group extracted words into visual lines by their vertical position."""
@@ -115,7 +117,7 @@ def _column_classifier(anchors):
     margin tolerates minor alignment jitter while staying clear of the gaps
     between columns (the printout leaves >50pt between adjacent columns).
     """
-    tur, raum, ser, ber = anchors
+    _tur, raum, ser, ber = anchors
 
     def col_of(x0: float) -> int:
         if x0 >= ber - 25:
@@ -141,20 +143,22 @@ def _to_iso_date(german: str | None) -> str | None:
     if not german:
         return None
     try:
-        return dt.datetime.strptime(german, "%d.%m.%Y").date().isoformat()
+        day, month, year = (int(part) for part in german.split("."))
+        return dt.date(year, month, day).isoformat()
     except ValueError:
         return None
 
 
 # --- PDF parsing -----------------------------------------------------------
 
+
 def parse_pdf(path: str) -> Transponder:
     """Parse one printout into a Transponder with its authorizations."""
     fname = os.path.basename(path)
     tp = Transponder(serial="", source_file=fname)
 
-    cur_lock: str | None = None        # current Schließanlage
-    cur_loc: str | None = None         # current Standort.Gebäude.Etage
+    cur_lock: str | None = None  # current Schließanlage
+    cur_loc: str | None = None  # current Standort.Gebäude.Etage
     cur_row: Authorization | None = None  # last primary row (for line wraps)
     full_text_parts: list[str] = []
 
@@ -172,8 +176,12 @@ def parse_pdf(path: str) -> Transponder:
                 texts = {w["text"] for w in ln}
                 if HDR_TOKENS <= texts:
                     pos = {w["text"]: w["x0"] for w in ln}
-                    anchors = (pos.get("Tür", 48.0),
-                               pos["Raumnummer"], pos["Seriennummer"], pos["Bereich"])
+                    anchors = (
+                        pos.get("Tür", 48.0),
+                        pos["Raumnummer"],
+                        pos["Seriennummer"],
+                        pos["Bereich"],
+                    )
                     col_idx = i
                     break
             if col_idx is None:
@@ -182,7 +190,10 @@ def parse_pdf(path: str) -> Transponder:
             # Transponder id line (page 1 only): the line after "Berechtigungen ...".
             if not tp.serial:
                 for i, ln in enumerate(lines[:col_idx]):
-                    if any(w["text"] == "Berechtigungen" for w in ln) and i + 1 < col_idx:
+                    if (
+                        any(w["text"] == "Berechtigungen" for w in ln)
+                        and i + 1 < col_idx
+                    ):
                         raw = " ".join(w["text"] for w in lines[i + 1]).strip()
                         _apply_transponder_header(tp, raw, fname)
                         break
@@ -190,19 +201,19 @@ def parse_pdf(path: str) -> Transponder:
             col_of = _column_classifier(anchors)
 
             # Walk the table body.
-            for ln in lines[col_idx + 1:]:
+            for ln in lines[col_idx + 1 :]:
                 full = " ".join(w["text"] for w in ln).strip()
 
-                if full.startswith("Anzahl der Datensätze") or full.startswith("Ausdruck vom"):
+                if full.startswith(("Anzahl der Datensätze", "Ausdruck vom")):
                     cur_row = None
                     continue
                 if full.startswith(LABEL_LOCK):
-                    cur_lock = full[len(LABEL_LOCK):].strip() or None
+                    cur_lock = full[len(LABEL_LOCK) :].strip() or None
                     tp.locking_system = cur_lock
                     cur_row = None
                     continue
                 if full.startswith(LABEL_LOC):
-                    cur_loc = _normalize_location(full[len(LABEL_LOC):])
+                    cur_loc = _normalize_location(full[len(LABEL_LOC) :])
                     cur_row = None
                     continue
 
@@ -216,8 +227,12 @@ def parse_pdf(path: str) -> Transponder:
                 if serial:
                     # A row is "complete" iff it carries a Seriennummer.
                     cur_row = Authorization(
-                        door_name=door, room_number=room, lock_serial=serial,
-                        area=area, location=cur_loc, locking_system=cur_lock,
+                        door_name=door,
+                        room_number=room,
+                        lock_serial=serial,
+                        area=area,
+                        location=cur_loc,
+                        locking_system=cur_lock,
                     )
                     tp.authorizations.append(cur_row)
                 elif cur_row is not None:
@@ -241,13 +256,19 @@ def parse_pdf(path: str) -> Transponder:
     if not tp.serial:
         # Fall back to filename stem if the id line could not be read.
         tp.serial = os.path.splitext(fname)[0].upper()
-        print(f"  ! {fname}: could not read transponder id; "
-              f"using fallback serial '{tp.serial}'", file=sys.stderr)
+        print(
+            f"  ! {fname}: could not read transponder id; "
+            f"using fallback serial '{tp.serial}'",
+            file=sys.stderr,
+        )
 
     # Self-check against the printout's own record count.
     if tp.record_count is not None and tp.record_count != len(tp.authorizations):
-        print(f"  ! {fname}: parsed {len(tp.authorizations)} rows but printout "
-              f"states {tp.record_count}", file=sys.stderr)
+        print(
+            f"  ! {fname}: parsed {len(tp.authorizations)} rows but printout "
+            f"states {tp.record_count}",
+            file=sys.stderr,
+        )
 
     return tp
 
@@ -264,6 +285,7 @@ def _apply_transponder_header(tp: Transponder, raw: str, fname: str) -> None:
 
 
 # --- SQL emission ----------------------------------------------------------
+
 
 def sql_str(value) -> str:
     """Render a Python value as a SQL literal (NULL / number / 'escaped')."""
@@ -306,13 +328,16 @@ CREATE TABLE IF NOT EXISTS authorizations (
 );
 """
 
-DROP = "DROP TABLE IF EXISTS authorizations;\n" \
-       "DROP TABLE IF EXISTS locks;\n" \
-       "DROP TABLE IF EXISTS transponders;\n"
+DROP = (
+    "DROP TABLE IF EXISTS authorizations;\n"
+    "DROP TABLE IF EXISTS locks;\n"
+    "DROP TABLE IF EXISTS transponders;\n"
+)
 
 
-def build_sql(transponders: list[Transponder], *, ddl: bool = True,
-              drop: bool = False) -> str:
+def build_sql(
+    transponders: list[Transponder], *, ddl: bool = True, drop: bool = False
+) -> str:
     """Aggregate parsed transponders into one idempotent SQL script."""
     # De-duplicate shared entities across all files.
     tp_rows: dict[str, Transponder] = {}
@@ -321,18 +346,23 @@ def build_sql(transponders: list[Transponder], *, ddl: bool = True,
 
     for tp in transponders:
         if tp.serial in tp_rows:
-            print(f"  ! duplicate transponder serial {tp.serial} "
-                  f"({tp.source_file}); keeping latest", file=sys.stderr)
+            print(
+                f"  ! duplicate transponder serial {tp.serial} "
+                f"({tp.source_file}); keeping latest",
+                file=sys.stderr,
+            )
         tp_rows[tp.serial] = tp
         for a in tp.authorizations:
-            lock_rows[a.lock_serial] = a            # last placement wins
+            lock_rows[a.lock_serial] = a  # last placement wins
             auth_pairs.add((tp.serial, a.lock_serial))
 
     out: list[str] = []
     out.append("-- Transponder authorizations exported from SimonsVoss PDF printouts")
-    out.append(f"-- Generated: {dt.datetime.now().isoformat(timespec='seconds')}")
-    out.append(f"-- Transponders: {len(tp_rows)}  Locks: {len(lock_rows)}  "
-               f"Authorizations: {len(auth_pairs)}")
+    out.append(f"-- Generated: {dt.datetime.now(dt.UTC).isoformat(timespec='seconds')}")
+    out.append(
+        f"-- Transponders: {len(tp_rows)}  Locks: {len(lock_rows)}  "
+        f"Authorizations: {len(auth_pairs)}"
+    )
     out.append("")
     if drop:
         out.append(DROP)
@@ -341,7 +371,9 @@ def build_sql(transponders: list[Transponder], *, ddl: bool = True,
     out.append("BEGIN;")
     out.append("")
 
-    out.append("-- Transponders ---------------------------------------------------------")
+    out.append(
+        "-- Transponders ---------------------------------------------------------"
+    )
     for s in sorted(tp_rows):
         tp = tp_rows[s]
         out.append(
@@ -359,7 +391,9 @@ def build_sql(transponders: list[Transponder], *, ddl: bool = True,
         )
     out.append("")
 
-    out.append("-- Locks ----------------------------------------------------------------")
+    out.append(
+        "-- Locks ----------------------------------------------------------------"
+    )
     for s in sorted(lock_rows):
         a = lock_rows[s]
         out.append(
@@ -373,7 +407,9 @@ def build_sql(transponders: list[Transponder], *, ddl: bool = True,
         )
     out.append("")
 
-    out.append("-- Authorizations (transponder <-> lock) -------------------------------")
+    out.append(
+        "-- Authorizations (transponder <-> lock) -------------------------------"
+    )
     for t_serial, l_serial in sorted(auth_pairs):
         out.append(
             "INSERT INTO authorizations (transponder_serial, lock_serial) VALUES ("
@@ -386,6 +422,7 @@ def build_sql(transponders: list[Transponder], *, ddl: bool = True,
 
 
 # --- CLI -------------------------------------------------------------------
+
 
 def collect_pdfs(paths: list[str]) -> list[str]:
     """Expand files, globs, and directories into a sorted list of PDF paths."""
@@ -404,15 +441,22 @@ def collect_pdfs(paths: list[str]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Parse SimonsVoss transponder PDFs into a self-contained "
-                    "SQL file (standalone schema; NOT the Django app DB — use "
-                    "the web upload or `manage.py loadpdfs` for that).")
+        "SQL file (standalone schema; NOT the Django app DB — use "
+        "the web upload or `manage.py loadpdfs` for that)."
+    )
     ap.add_argument("paths", nargs="+", help="PDF files, globs, or directories")
-    ap.add_argument("-o", "--output", default="transponders.sql",
-                    help="output .sql file (default: transponders.sql)")
-    ap.add_argument("--no-ddl", action="store_true",
-                    help="omit CREATE TABLE statements (emit inserts only)")
-    ap.add_argument("--drop", action="store_true",
-                    help="prepend DROP TABLE statements")
+    ap.add_argument(
+        "-o",
+        "--output",
+        default="transponders.sql",
+        help="output .sql file (default: transponders.sql)",
+    )
+    ap.add_argument(
+        "--no-ddl",
+        action="store_true",
+        help="omit CREATE TABLE statements (emit inserts only)",
+    )
+    ap.add_argument("--drop", action="store_true", help="prepend DROP TABLE statements")
     args = ap.parse_args(argv)
 
     pdfs = collect_pdfs(args.paths)
@@ -424,14 +468,18 @@ def main(argv: list[str] | None = None) -> int:
     for path in pdfs:
         try:
             tp = parse_pdf(path)
-        except Exception as exc:  # keep going across a batch
-            print(f"  ! {os.path.basename(path)}: failed to parse ({exc})",
-                  file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 - keep going across a batch
+            print(
+                f"  ! {os.path.basename(path)}: failed to parse ({exc})",
+                file=sys.stderr,
+            )
             continue
         transponders.append(tp)
         label = tp.person_name or (f"ASTA {tp.asta_number}" if tp.asta_number else "—")
-        print(f"  {os.path.basename(path):16} {tp.serial:10} {label:22} "
-              f"{len(tp.authorizations):3} doors")
+        print(
+            f"  {os.path.basename(path):16} {tp.serial:10} {label:22} "
+            f"{len(tp.authorizations):3} doors"
+        )
 
     if not transponders:
         print("Nothing parsed.", file=sys.stderr)

@@ -75,15 +75,20 @@ def parse_asta_csv(path: str) -> dict:
         if not _cell(r, _NAME):
             continue
         ri = len(doors)
-        loc = ".".join(p for p in (_cell(r, _STANDORT), _cell(r, _GEBAEUDE),
-                                   _norm(_cell(r, _ETAGE))) if p)
-        doors.append({
-            "serial": _cell(r, _SERIAL),
-            "door_name": _norm(_cell(r, _NAME))[:255],
-            "room_number": _norm(_cell(r, _RAUM))[:64],
-            "location": loc[:64],
-            "area": _norm(_cell(r, _AREA))[:64],
-        })
+        loc = ".".join(
+            p
+            for p in (_cell(r, _STANDORT), _cell(r, _GEBAEUDE), _norm(_cell(r, _ETAGE)))
+            if p
+        )
+        doors.append(
+            {
+                "serial": _cell(r, _SERIAL),
+                "door_name": _norm(_cell(r, _NAME))[:255],
+                "room_number": _norm(_cell(r, _RAUM))[:64],
+                "location": loc[:64],
+                "area": _norm(_cell(r, _AREA))[:64],
+            }
+        )
         for ci, c in enumerate(col_index):
             if c < len(r) and r[c].strip().lower() == "x":
                 marks.add((ci, ri))
@@ -113,12 +118,16 @@ def import_asta_csv(csv_path: str, pdf_path: str, source_name: str) -> dict:
     # Cross-check that the two exports line up before trusting an index join.
     pdf_persons = sorted(res.persons, key=lambda p: p.column)
     if [p.serial for p in pdf_persons] != data["person_serials"]:
-        raise ValueError("CSV and PDF person columns differ — cannot merge "
-                         "(re-export both from the same matrix).")
+        raise ValueError(
+            "CSV and PDF person columns differ — cannot merge "
+            "(re-export both from the same matrix)."
+        )
     pdf_doors = sorted(res.doors, key=lambda d: d.row)
     if len(pdf_doors) != len(data["doors"]):
-        raise ValueError(f"CSV has {len(data['doors'])} door rows but the PDF "
-                         f"has {len(pdf_doors)} — cannot merge.")
+        raise ValueError(
+            f"CSV has {len(data['doors'])} door rows but the PDF "
+            f"has {len(pdf_doors)} — cannot merge."
+        )
     # Doors join by position, so verify the two orders agree (the PDF name may
     # be truncated, so compare on the common prefix). Otherwise a divergent
     # re-export sort would silently bind grants to the wrong lock.
@@ -128,46 +137,55 @@ def import_asta_csv(csv_path: str, pdf_path: str, source_name: str) -> dict:
         if n < 4 or a[:n] != b[:n]:
             raise ValueError(
                 f"CSV and PDF door rows are out of order at row {i}: "
-                f"{cd['door_name']!r} vs {pd.name!r} — cannot merge.")
+                f"{cd['door_name']!r} vs {pd.name!r} — cannot merge."
+            )
     serials = [d["serial"] for d in data["doors"]]
     if not all(serials):
-        raise ValueError("CSV has a door row with a blank lock serial — "
-                         "cannot merge.")
+        raise ValueError("CSV has a door row with a blank lock serial — cannot merge.")
     if len(set(serials)) != len(serials):
         raise ValueError("CSV has duplicate door serials — cannot merge.")
 
     # PDF mark state at 0-based (col, row): column/row are 1-based and share
     # the CSV's order (verified above / by row count).
-    state = {(c - 1, r - 1): res.mark_states.get((c, r), "active")
-             for (c, r) in res.marks}
+    state = {
+        (c - 1, r - 1): res.mark_states.get((c, r), "active") for (c, r) in res.marks
+    }
 
     Transponder.objects.all().delete()
     Lock.objects.all().delete()
 
     locks = []
     for d in data["doors"]:
-        locks.append(Lock.objects.create(
-            serial=d["serial"], door_name=d["door_name"],
-            room_number=d["room_number"], location=d["location"],
-            area=d["area"]))
+        locks.append(
+            Lock.objects.create(
+                serial=d["serial"],
+                door_name=d["door_name"],
+                room_number=d["room_number"],
+                location=d["location"],
+                area=d["area"],
+            )
+        )
 
     transponders = []
     for p in pdf_persons:
-        transponders.append(Transponder.objects.create(
-            serial=p.serial, asta_number=p.asta_number,
-            person_name=p.person_name or "", source_file=source_name))
+        transponders.append(
+            Transponder.objects.create(
+                serial=p.serial,
+                asta_number=p.asta_number,
+                person_name=p.person_name or "",
+                source_file=source_name,
+            )
+        )
 
     ActiveTh = Transponder.locks.through
     PlannedTh = Transponder.planned_locks.through
     active_rows, planned_rows = [], []
-    for (ci, ri) in data["marks"]:
+    for ci, ri in data["marks"]:
         tp, lk = transponders[ci], locks[ri]
         if state.get((ci, ri), "active") == "active":
-            active_rows.append(ActiveTh(transponder_id=tp.serial,
-                                        lock_id=lk.serial))
+            active_rows.append(ActiveTh(transponder_id=tp.serial, lock_id=lk.serial))
         else:
-            planned_rows.append(PlannedTh(transponder_id=tp.serial,
-                                          lock_id=lk.serial))
+            planned_rows.append(PlannedTh(transponder_id=tp.serial, lock_id=lk.serial))
     ActiveTh.objects.bulk_create(active_rows)
     PlannedTh.objects.bulk_create(planned_rows)
     active_links, planned_links = len(active_rows), len(planned_rows)

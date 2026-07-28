@@ -39,6 +39,7 @@ import os
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from typing import Any, TypedDict
 
 import pdfplumber
 
@@ -54,7 +55,8 @@ RE_SERIAL = re.compile(r"^(?:\d{2}[0-9A-HJ-NP-Z]{5}|TC?-\d{4,6}|LC-\d{4})$")
 # matrix this page shows). OCR may prepend stray quote marks to the numbers,
 # hence the \D gaps.
 RE_FOOTER = re.compile(
-    r"Zeile\D{0,3}(\d+)\s*-\s*(\d+)\D{1,8}Spalte\D{0,3}(\d+)\s*-\s*(\d+)")
+    r"Zeile\D{0,3}(\d+)\s*-\s*(\d+)\D{1,8}Spalte\D{0,3}(\d+)\s*-\s*(\d+)"
+)
 
 # A fragment of that footer: scanner OCR can jitter the footer words apart
 # vertically, splitting them over several visual "lines".
@@ -83,22 +85,25 @@ STRIP_GAP = 5.0
 
 # --- Parsed structures -------------------------------------------------------
 
+
 @dataclass
 class MatrixPerson:
     """One transponder column of the matrix."""
-    column: int                     # 1-based global column number
-    serial: str                     # repaired serial (best effort)
-    raw_serial: str                 # as read from the text layer
-    serial_valid: bool              # repaired serial matches RE_SERIAL
-    serial_suspect: bool            # repair went beyond trivial fixes
+
+    column: int  # 1-based global column number
+    serial: str  # repaired serial (best effort)
+    raw_serial: str  # as read from the text layer
+    serial_valid: bool  # repaired serial matches RE_SERIAL
+    serial_suspect: bool  # repair went beyond trivial fixes
     asta_number: int | None
-    person_name: str                # remainder of the header, verbatim
+    person_name: str  # remainder of the header, verbatim
 
 
 @dataclass
 class MatrixDoor:
     """One door row of the matrix (no lock serial in this format)."""
-    row: int                        # 1-based global row number
+
+    row: int  # 1-based global row number
     name: str
     room_number: str = ""
     floor: str = ""
@@ -115,17 +120,17 @@ class MatrixResult:
     # native-PDF matrix reader, which can tell the two mark weights apart;
     # elsewhere it stays empty and every mark is treated as active.
     mark_states: dict[tuple[int, int], str] = field(default_factory=dict)
-    expected_columns: int | None = None   # from the largest 'Spalte a-b' footer
-    expected_rows: int | None = None      # from the largest 'Zeile a-b' footer
-    ocr_scan: bool = False                # text layer came from scanner OCR
+    expected_columns: int | None = None  # from the largest 'Spalte a-b' footer
+    expected_rows: int | None = None  # from the largest 'Zeile a-b' footer
+    ocr_scan: bool = False  # text layer came from scanner OCR
     warnings: list[str] = field(default_factory=list)
 
     @property
     def consistent(self) -> bool:
-        cols_ok = (self.expected_columns is None
-                   or self.expected_columns == len(self.persons))
-        rows_ok = (self.expected_rows is None
-                   or self.expected_rows == len(self.doors))
+        cols_ok = self.expected_columns is None or self.expected_columns == len(
+            self.persons
+        )
+        rows_ok = self.expected_rows is None or self.expected_rows == len(self.doors)
         return cols_ok and rows_ok
 
 
@@ -153,13 +158,23 @@ _LOWER = {"g": "9", "s": "5", "q": "9", "t": "L"}
 _SYMBOLS = {"¿": "2", "Ø": "0", "ø": "0"}
 
 # In the two leading positions of a 7-char serial only digits are legal.
-_DIGIT_POS = {"L": "1", "T": "1", "S": "5", "B": "8", "G": "6", "Z": "2",
-              "A": "4", "Q": "0", "D": "0"}
+_DIGIT_POS = {
+    "L": "1",
+    "T": "1",
+    "S": "5",
+    "B": "8",
+    "G": "6",
+    "Z": "2",
+    "A": "4",
+    "Q": "0",
+    "D": "0",
+}
 
 
 def _strip_diacritics(s: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFKD", s)
-                   if not unicodedata.combining(c))
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c)
+    )
 
 
 def repair_serial(raw: str) -> tuple[str, bool, bool]:
@@ -199,10 +214,24 @@ def lookalike_equal(a: str, b: str) -> bool:
     """
     if len(a) != len(b):
         return False
-    pairs = {("O", "0"), ("Q", "0"), ("D", "0"), ("I", "1"), ("L", "1"),
-             ("S", "5"), ("S", "8"), ("S", "9"), ("B", "8"), ("Z", "2"),
-             ("G", "6"), ("G", "9"), ("T", "7"), ("A", "4"), ("1", "7"),
-             ("0", "9")}
+    pairs = {
+        ("O", "0"),
+        ("Q", "0"),
+        ("D", "0"),
+        ("I", "1"),
+        ("L", "1"),
+        ("S", "5"),
+        ("S", "8"),
+        ("S", "9"),
+        ("B", "8"),
+        ("Z", "2"),
+        ("G", "6"),
+        ("G", "9"),
+        ("T", "7"),
+        ("A", "4"),
+        ("1", "7"),
+        ("0", "9"),
+    }
     for x, y in zip(a.upper(), b.upper()):
         if x != y and (x, y) not in pairs and (y, x) not in pairs:
             return False
@@ -210,6 +239,7 @@ def lookalike_equal(a: str, b: str) -> bool:
 
 
 # --- Geometry helpers --------------------------------------------------------
+
 
 def _x_center(w) -> float:
     return (w["x0"] + w["x1"]) / 2
@@ -249,6 +279,7 @@ def _cluster_lines(words, tol: float = 3.0):
 
 
 # --- Column (person) extraction ---------------------------------------------
+
 
 def _read_strip(strip, flipped: bool) -> list[str]:
     """Return a strip's words in reading order.
@@ -311,19 +342,18 @@ def _extract_persons_oriented(rotated_words, flipped: bool):
 
     # Words below the SN band are expiry dots / PB junk / footer noise;
     # dropping them keeps neighbouring strips from being bridged.
-    strips = _cluster_strips(
-        [w for w in rotated_words if w["top"] <= band_bottom])
+    strips = _cluster_strips([w for w in rotated_words if w["top"] <= band_bottom])
 
     persons, n_valid = [], 0
     for strip in strips:
         sn_words = [w for w in strip if band_top <= w["top"] <= band_bottom]
         name_words = [w for w in strip if w["top"] < band_top]
         if not sn_words:
-            continue                      # logo fragments, stray marks
+            continue  # logo fragments, stray marks
         raw_serial = "".join(_read_strip(sn_words, flipped))
         name = " ".join(_read_strip(name_words, flipped)).strip()
         if raw_serial.upper() == "SN" or "PERSONEN" in name.upper():
-            continue                      # the axis-label column itself
+            continue  # the axis-label column itself
         serial, valid, suspect = repair_serial(raw_serial)
         if valid and not suspect:
             n_valid += 1
@@ -333,6 +363,7 @@ def _extract_persons_oriented(rotated_words, flipped: bool):
 
 
 # --- Row (door) extraction ---------------------------------------------------
+
 
 def _extract_doors(upright_words, strip_centers):
     """Parse door rows and X marks from the upright text of one page.
@@ -351,11 +382,11 @@ def _extract_doors(upright_words, strip_centers):
     anchors = {}
     for ln in _cluster_lines(upright_words):
         text = " ".join(w["text"] for w in ln).upper()
-        if "NAME" in text and ("SCHLIESSUNGEN" in text or "TÜREN" in text
-                               or "TUREN" in text):
+        if "NAME" in text and (
+            "SCHLIESSUNGEN" in text or "TÜREN" in text or "TUREN" in text
+        ):
             header_top = ln[0]["top"]
-            anchors = {w["text"]: w["x0"] for w in ln
-                       if w["text"] in DOOR_ATTR_TOKENS}
+            anchors = {w["text"]: w["x0"] for w in ln if w["text"] in DOOR_ATTR_TOKENS}
             break
 
     def attr_value(key, attr_words):
@@ -364,8 +395,9 @@ def _extract_doors(upright_words, strip_centers):
             return ""
         higher = [x for x in anchors.values() if x > lo]
         hi = min(higher) if higher else grid_left
-        return " ".join(w["text"] for w in attr_words
-                        if lo - 4 <= w["x0"] < hi - 4).strip()
+        return " ".join(
+            w["text"] for w in attr_words if lo - 4 <= w["x0"] < hi - 4
+        ).strip()
 
     # Locate the footer band first: OCR jitter can split the footer words
     # over several visual lines, and any orphaned fragment (';') would
@@ -406,20 +438,25 @@ def _extract_doors(upright_words, strip_centers):
         # (U+00D7), which could turn a stray cross into a phantom door row,
         # and rejected those Extended-A letters.
         if name and not any(c.isalnum() for c in name):
-            name = ""            # bare punctuation fragments are not doors
+            name = ""  # bare punctuation fragments are not doors
         if name:
             row += 1
-            doors.append(MatrixDoor(
-                row=row, name=name,
-                room_number=attr_value("RN", attr_words),
-                floor=attr_value("E", attr_words)))
+            doors.append(
+                MatrixDoor(
+                    row=row,
+                    name=name,
+                    room_number=attr_value("RN", attr_words),
+                    floor=attr_value("E", attr_words),
+                )
+            )
         if row:
             for w in x_words:
                 if w["text"].strip().lower() not in X_MARK_TOKENS:
                     continue
                 c = _x_center(w)
-                nearest = min(range(len(strip_centers)),
-                              key=lambda i: abs(strip_centers[i] - c))
+                nearest = min(
+                    range(len(strip_centers)), key=lambda i: abs(strip_centers[i] - c)
+                )
                 if abs(strip_centers[nearest] - c) <= STRIP_GAP + 2:
                     marks.append((row, nearest))
     return doors, marks
@@ -427,7 +464,19 @@ def _extract_doors(upright_words, strip_centers):
 
 # --- Whole-file parsing ------------------------------------------------------
 
-def _page_footer(page_text: str):
+
+class _Footer(TypedDict):
+    rows: tuple[int, int]
+    cols: tuple[int, int]
+
+
+class _PageData(TypedDict):
+    rotated: list[dict[str, Any]]
+    upright: list[dict[str, Any]]
+    footer: _Footer | None
+
+
+def _page_footer(page_text: str) -> _Footer | None:
     m = RE_FOOTER.search(page_text)
     if not m:
         return None
@@ -439,16 +488,22 @@ def parse_matrix_pdf(path: str) -> MatrixResult:
     """Parse one Schließmatrix export (native or scanned) into a MatrixResult."""
     res = MatrixResult(source_file=os.path.basename(path))
 
-    pages = []
+    pages: list[_PageData] = []
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages:
             words = page.extract_words(use_text_flow=False)
-            pages.append({
-                "rotated": [w for w in words if not w["upright"]
-                            and (w["x1"] - w["x0"]) <= MAX_ROTATED_WORD_WIDTH],
-                "upright": [w for w in words if w["upright"]],
-                "footer": _page_footer(page.extract_text() or ""),
-            })
+            pages.append(
+                {
+                    "rotated": [
+                        w
+                        for w in words
+                        if not w["upright"]
+                        and (w["x1"] - w["x0"]) <= MAX_ROTATED_WORD_WIDTH
+                    ],
+                    "upright": [w for w in words if w["upright"]],
+                    "footer": _page_footer(page.extract_text() or ""),
+                }
+            )
 
     # Decide the header-text orientation once for the whole file (one file
     # = one production pipeline), voting with cleanly-valid serials. A
@@ -466,8 +521,8 @@ def parse_matrix_pdf(path: str) -> MatrixResult:
             score[flip] += n
     use_flipped = score[True] >= score[False]
 
-    col_cursor = 0          # highest global column number assigned so far
-    row_cursor = 0          # highest global row number assigned so far
+    col_cursor = 0  # highest global column number assigned so far
+    row_cursor = 0  # highest global row number assigned so far
     known_cols: dict[int, MatrixPerson] = {}
     for page_no, pg in enumerate(pages, start=1):
         persons_raw = oriented[(page_no - 1, use_flipped)]
@@ -481,19 +536,24 @@ def parse_matrix_pdf(path: str) -> MatrixResult:
                     f"page {page_no}: footer states {expected_here} "
                     f"column(s) (Spalte {footer['cols'][0]}-"
                     f"{footer['cols'][1]}) but {len(persons_raw)} could "
-                    f"be read from the text layer")
+                    f"be read from the text layer"
+                )
 
         page_persons = []
-        for i, (serial, raw, valid, suspect, name, _c) in enumerate(
-                persons_raw):
+        for i, (serial, raw, valid, suspect, name, _c) in enumerate(persons_raw):
             asta, person = None, name
             m = RE_ASTA.match(name)
             if m:
                 asta, person = int(m.group(1)), m.group(2).strip()
             p = MatrixPerson(
-                column=page_col_start + i, serial=serial, raw_serial=raw,
-                serial_valid=valid, serial_suspect=suspect,
-                asta_number=asta, person_name=person)
+                column=page_col_start + i,
+                serial=serial,
+                raw_serial=raw,
+                serial_valid=valid,
+                serial_suspect=suspect,
+                asta_number=asta,
+                person_name=person,
+            )
             page_persons.append(p)
             # A matrix split by rows repeats its column headers on every
             # page (same Spalte range, new Zeile range); count each
@@ -505,16 +565,17 @@ def parse_matrix_pdf(path: str) -> MatrixResult:
             elif seen.serial != p.serial:
                 res.warnings.append(
                     f"page {page_no}: column {p.column} reads serial "
-                    f"{p.serial} but an earlier page read {seen.serial}")
+                    f"{p.serial} but an earlier page read {seen.serial}"
+                )
 
-        col_cursor = max(col_cursor, footer["cols"][1] if footer
-                         else page_col_start + len(persons_raw) - 1)
+        col_cursor = max(
+            col_cursor,
+            footer["cols"][1] if footer else page_col_start + len(persons_raw) - 1,
+        )
         if footer:
-            res.expected_columns = max(res.expected_columns or 0,
-                                       footer["cols"][1])
+            res.expected_columns = max(res.expected_columns or 0, footer["cols"][1])
             z1, z2 = footer["rows"]
-            res.expected_rows = max(res.expected_rows or 0,
-                                    z2 if z2 >= z1 else 0)
+            res.expected_rows = max(res.expected_rows or 0, z2 if z2 >= z1 else 0)
 
         # Door rows + X marks (absent on header-only pages, Zeile 1-0).
         # When a matrix is split across column pages the same door rows
@@ -534,10 +595,12 @@ def parse_matrix_pdf(path: str) -> MatrixResult:
                 elif seen.name != d.name:
                     res.warnings.append(
                         f"page {page_no}: row {g} reads {d.name!r} but an "
-                        f"earlier page read {seen.name!r}")
+                        f"earlier page read {seen.name!r}"
+                    )
             for line_row, col_idx in page_marks:
-                res.marks.add((page_persons[col_idx].column,
-                               page_row_start + line_row - 1))
+                res.marks.add(
+                    (page_persons[col_idx].column, page_row_start + line_row - 1)
+                )
             row_cursor = max(row_cursor, page_row_start + len(doors) - 1)
         elif upright and not page_persons:
             # Door rows without readable column headers cannot be mapped
@@ -547,25 +610,26 @@ def parse_matrix_pdf(path: str) -> MatrixResult:
                 res.warnings.append(
                     f"page {page_no}: text rows are present but no "
                     f"transponder columns could be read — door/mark "
-                    f"extraction skipped for this page")
+                    f"extraction skipped for this page"
+                )
 
-    res.ocr_scan = any(p.serial_suspect or not p.serial_valid
-                       for p in res.persons)
+    res.ocr_scan = any(p.serial_suspect or not p.serial_valid for p in res.persons)
 
-    if (res.expected_columns is not None
-            and res.expected_columns != len(res.persons)):
+    if res.expected_columns is not None and res.expected_columns != len(res.persons):
         res.warnings.append(
             f"matrix states {res.expected_columns} transponder column(s) "
-            f"but {len(res.persons)} were read")
-    if (res.expected_rows is not None
-            and res.expected_rows != len(res.doors)):
+            f"but {len(res.persons)} were read"
+        )
+    if res.expected_rows is not None and res.expected_rows != len(res.doors):
         res.warnings.append(
             f"matrix states {res.expected_rows} door row(s) "
-            f"but {len(res.doors)} were read")
+            f"but {len(res.doors)} were read"
+        )
     return res
 
 
 # --- Format detection --------------------------------------------------------
+
 
 def detect_format(path: str) -> str:
     """Classify a PDF as 'list' (per-transponder printout) or 'matrix'.
@@ -580,19 +644,21 @@ def detect_format(path: str) -> str:
         n_rotated_serials = 0
         for page in pdf.pages:
             text = page.extract_text() or ""
-            if LIST_MARKER in text or ("Raumnummer" in text
-                                       and "Seriennummer" in text):
+            if LIST_MARKER in text or ("Raumnummer" in text and "Seriennummer" in text):
                 return "list"
-            if (RE_FOOTER.search(text)
-                    or "PERSONEN" in text or "NENOSREP" in text
-                    or "SCHLIESSUNGEN" in text or "NEGNUSSEILHCS" in text):
+            if (
+                RE_FOOTER.search(text)
+                or "PERSONEN" in text
+                or "NENOSREP" in text
+                or "SCHLIESSUNGEN" in text
+                or "NEGNUSSEILHCS" in text
+            ):
                 saw_matrix = True
             if not saw_matrix:
                 for w in page.extract_words():
                     if w["upright"]:
                         continue
-                    if any(repair_serial(t)[1]
-                           for t in (w["text"], w["text"][::-1])):
+                    if any(repair_serial(t)[1] for t in (w["text"], w["text"][::-1])):
                         n_rotated_serials += 1
         if saw_matrix or n_rotated_serials >= 5:
             return "matrix"

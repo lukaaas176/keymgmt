@@ -436,14 +436,15 @@ class DataTransferReplaceTests(TestCase):
 
     def test_replace_requires_confirmation_and_known_mode_before_mutation(self):
         self.seed_old_state()
-        for kwargs in (
-            {"mode": "replace"},
-            {"mode": "unknown", "replace_confirmed": True},
-        ):
-            with self.subTest(kwargs=kwargs):
-                with self.assertRaises(data_transfer.BackupValidationError):
-                    data_transfer.restore_backup(self.backup_content(), **kwargs)
-                self.assertTrue(Lock.objects.filter(serial="OLD-LOCK").exists())
+        with self.assertRaises(data_transfer.BackupValidationError):
+            data_transfer.restore_backup(self.backup_content(), mode="replace")
+        self.assertTrue(Lock.objects.filter(serial="OLD-LOCK").exists())
+
+        with self.assertRaises(data_transfer.BackupValidationError):
+            data_transfer.restore_backup(
+                self.backup_content(), mode="unknown", replace_confirmed=True
+            )
+        self.assertTrue(Lock.objects.filter(serial="OLD-LOCK").exists())
 
     def test_replace_rolls_back_when_relationship_writes_fail(self):
         self.seed_old_state()

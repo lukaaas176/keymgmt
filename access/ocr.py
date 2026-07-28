@@ -45,14 +45,26 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterable
+from itertools import pairwise
+from typing import cast
 
 import pdfplumber
 from PIL import Image, ImageDraw, ImageOps
 
-from .matrix_parser import (MAX_ROTATED_WORD_WIDTH, RE_ASTA, RE_FOOTER,
-                            X_MARK_TOKENS, MatrixDoor, MatrixPerson,
-                            MatrixResult, _cluster_lines, _cluster_strips,
-                            _page_footer, repair_serial)
+from .matrix_parser import (
+    MAX_ROTATED_WORD_WIDTH,
+    RE_ASTA,
+    RE_FOOTER,
+    X_MARK_TOKENS,
+    MatrixDoor,
+    MatrixPerson,
+    MatrixResult,
+    _cluster_lines,
+    _cluster_strips,
+    _page_footer,
+    repair_serial,
+)
 
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
 
@@ -63,8 +75,8 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
 # and validated against Lukas.pdf at 200 dpi.
 NATIVE_DPI = 200
 NATIVE_INK_LEVEL = 100
-NATIVE_CELL_HALF_PT = 3.4        # half a cell, in PDF points
-NATIVE_MARK_MIN = 0.06           # ink fraction at/above which a cell is marked
+NATIVE_CELL_HALF_PT = 3.4  # half a cell, in PDF points
+NATIVE_MARK_MIN = 0.06  # ink fraction at/above which a cell is marked
 # The mark weight is strongly bimodal (measured on Lukas.pdf): a thin ×
 # (configured, not yet programmed) fills ~0.2-0.3 of the cell, a bold ×
 # (programmed) ~0.7-0.8, with a clear gap between. Above this fraction a
@@ -76,8 +88,8 @@ NATIVE_ACTIVE_MIN = 0.45
 # different, non-authorizing state (verified against ASTA-2026.csv: hollow
 # crosses are never an 'x') and must be rejected. Only the centre separates
 # the two, so sample a small central probe and require it to be inked.
-NATIVE_CENTER_HALF_PT = 1.4      # half-size of the centre probe, in PDF points
-NATIVE_CENTER_MIN = 0.30         # min centre ink for a solid (real) cross
+NATIVE_CENTER_HALF_PT = 1.4  # half-size of the centre probe, in PDF points
+NATIVE_CENTER_MIN = 0.30  # min centre ink for a solid (real) cross
 # A door label may be trailed by the first door-property column (PB), a lone
 # number in its own column well to the right of the name. A gap this wide (pt)
 # between the last two words marks that number as PB — to be dropped — while a
@@ -127,8 +139,8 @@ CELL_X_SOLID = 0.15
 # a transitional state (configured-not-programmed or removed-not-transmitted,
 # manual §7.5). It is too ambiguous to count as access, so it is reported
 # for manual review rather than scored as an authorization.
-CELL_FAINT_MIN = 0.12   # grey content at/above this is not empty
-CELL_FAINT_MAX_INK = 0.20   # dark-ink fraction below this is "not solid"
+CELL_FAINT_MIN = 0.12  # grey content at/above this is not empty
+CELL_FAINT_MAX_INK = 0.20  # dark-ink fraction below this is "not solid"
 
 _SERIAL_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-"
 
@@ -143,26 +155,38 @@ def is_image(path: str) -> bool:
 
 # --- native-PDF matrix (vector marks) ----------------------------------------
 
+
 def _native_columns(page):
     """Person columns of one matrix page: (x_center_pt, serial, raw, valid,
     suspect, name), left to right. Serials are read from the SN band of the
     90°-rotated headers (stored character-reversed in this layout)."""
-    rot = [w for w in page.extract_words()
-           if not w["upright"] and (w["x1"] - w["x0"]) <= MAX_ROTATED_WORD_WIDTH]
+    rot = [
+        w
+        for w in page.extract_words()
+        if not w["upright"] and (w["x1"] - w["x0"]) <= MAX_ROTATED_WORD_WIDTH
+    ]
     out = []
     for strip in _cluster_strips(rot):
         xc = sum((w["x0"] + w["x1"]) / 2 for w in strip) / len(strip)
-        sn_words = sorted((w for w in strip if w["top"] >= NATIVE_HEADER_SPLIT),
-                          key=lambda w: w["top"])
+        sn_words = sorted(
+            (w for w in strip if w["top"] >= NATIVE_HEADER_SPLIT),
+            key=lambda w: w["top"],
+        )
         sn = []
         for w in sn_words:
             if sn and w["top"] - sn[-1]["bottom"] > NATIVE_SN_GAP:
-                break   # a lower band (expiry / PB) — not part of the serial
+                break  # a lower band (expiry / PB) — not part of the serial
             sn.append(w)
-        raw = "".join(w["text"][::-1] for w in sorted(sn, key=lambda w: -w["top"])).strip()
-        name = " ".join(w["text"][::-1] for w in
-                        sorted([w for w in strip if w["top"] < NATIVE_HEADER_SPLIT],
-                               key=lambda w: -w["top"])).strip()
+        raw = "".join(
+            w["text"][::-1] for w in sorted(sn, key=lambda w: -w["top"])
+        ).strip()
+        name = " ".join(
+            w["text"][::-1]
+            for w in sorted(
+                [w for w in strip if w["top"] < NATIVE_HEADER_SPLIT],
+                key=lambda w: -w["top"],
+            )
+        ).strip()
         serial, valid, suspect = repair_serial(raw) if raw else ("", False, False)
         # Skip the far-left axis-label strip: no name and no readable serial.
         if "PERSONEN" in name.upper() or (not name and not valid):
@@ -185,12 +209,24 @@ def _native_doors(page):
         left = sorted((w for w in ln if w["x0"] < 230), key=lambda w: w["x0"])
         if not left:
             continue
-        if (len(left) >= 2 and re.fullmatch(r"\d+", left[-1]["text"])
-                and left[-1]["x0"] - left[-2]["x1"] > NATIVE_PROP_GAP):
+        if (
+            len(left) >= 2
+            and re.fullmatch(r"\d+", left[-1]["text"])
+            and left[-1]["x0"] - left[-2]["x1"] > NATIVE_PROP_GAP
+        ):
             left = left[:-1]
         txt = " ".join(w["text"] for w in left).strip()
-        if any(k in txt for k in ("NAME", "SCHLIESS", "Zeile", "Spalte",
-                                  "SimonsVoss", "Technologies")):
+        if any(
+            k in txt
+            for k in (
+                "NAME",
+                "SCHLIESS",
+                "Zeile",
+                "Spalte",
+                "SimonsVoss",
+                "Technologies",
+            )
+        ):
             continue
         if re.fullmatch(r"[\d\s.]+", txt) or len(txt) < 3:
             continue
@@ -210,11 +246,15 @@ def is_native_matrix_pdf(path: str) -> bool:
         saw_matrix = False
         for page in pdf.pages:
             words = page.extract_words()
-            if any(w["text"].strip().lower() in X_MARK_TOKENS
-                   for w in words if w["upright"]):
-                return False        # textual marks present -> text parser
+            if any(
+                w["text"].strip().lower() in X_MARK_TOKENS
+                for w in words
+                if w["upright"]
+            ):
+                return False  # textual marks present -> text parser
             if _page_footer(page.extract_text() or "") and any(
-                    v for _x, _s, _r, v, _su, _n in _native_columns(page)):
+                v for _x, _s, _r, v, _su, _n in _native_columns(page)
+            ):
                 saw_matrix = True
     return saw_matrix
 
@@ -237,13 +277,13 @@ def parse_native_matrix(path: str, *, include_removed: bool = False) -> MatrixRe
     with pdfplumber.open(path) as pdf:
         info = [(pg, _page_footer(pg.extract_text() or "")) for pg in pdf.pages]
 
-        colgeom = {}            # (s1,s2) -> columns, from its header page
+        colgeom = {}  # (s1,s2) -> columns, from its header page
         for pg, f in info:
             if f and f["cols"] not in colgeom:
                 cols = _native_columns(pg)
                 if cols:
                     colgeom[f["cols"]] = cols
-        doorband = {}           # (z1,z2) -> (spalte_start, doors), leftmost page
+        doorband = {}  # (z1,z2) -> (spalte_start, doors), leftmost page
         for pg, f in info:
             if not f:
                 continue
@@ -268,10 +308,17 @@ def parse_native_matrix(path: str, *, include_removed: bool = False) -> MatrixRe
                 m = RE_ASTA.match(name)
                 if m:
                     asta, person = int(m.group(1)), m.group(2).strip()
-                res.persons.append(MatrixPerson(
-                    column=col_base[k] + i + 1, serial=ser, raw_serial=raw,
-                    serial_valid=valid, serial_suspect=suspect,
-                    asta_number=asta, person_name=person))
+                res.persons.append(
+                    MatrixPerson(
+                        column=col_base[k] + i + 1,
+                        serial=ser,
+                        raw_serial=raw,
+                        serial_valid=valid,
+                        serial_suspect=suspect,
+                        asta_number=asta,
+                        person_name=person,
+                    )
+                )
         for k in row_order:
             for j, (_y, name) in enumerate(doorband[k][1]):
                 res.doors.append(MatrixDoor(row=row_base[k] + j + 1, name=name))
@@ -295,19 +342,17 @@ def parse_native_matrix(path: str, *, include_removed: bool = False) -> MatrixRe
                     if cy - half < 0 or cy + half > H:
                         continue
                     cell = im.crop((cx - half, cy - half, cx + half, cy + half))
-                    px = cell.getdata()
+                    px = list(cast(Iterable[int], cell.getdata()))
                     frac = sum(1 for p in px if p < NATIVE_INK_LEVEL) / len(px)
                     if frac < NATIVE_MARK_MIN:
                         continue
                     # Reject hollow outline crosses (empty centre): a real
                     # cross, however thin, inks the cell centre where its
                     # strokes meet.
-                    ccell = im.crop((cx - chalf, cy - chalf,
-                                     cx + chalf, cy + chalf))
-                    cpx = ccell.getdata()
+                    ccell = im.crop((cx - chalf, cy - chalf, cx + chalf, cy + chalf))
+                    cpx = list(cast(Iterable[int], ccell.getdata()))
                     cfrac = sum(1 for p in cpx if p < NATIVE_INK_LEVEL) / len(cpx)
-                    key = (col_base[f["cols"]] + ci + 1,
-                           row_base[f["rows"]] + ri + 1)
+                    key = (col_base[f["cols"]] + ci + 1, row_base[f["rows"]] + ri + 1)
                     if cfrac < NATIVE_CENTER_MIN:
                         # Hollow outline cross: not a live authorisation. It is a
                         # door still programmed but withdrawn — pending removal.
@@ -319,7 +364,8 @@ def parse_native_matrix(path: str, *, include_removed: bool = False) -> MatrixRe
                         continue
                     res.marks.add(key)
                     res.mark_states[key] = (
-                        "active" if frac >= NATIVE_ACTIVE_MIN else "planned")
+                        "active" if frac >= NATIVE_ACTIVE_MIN else "planned"
+                    )
 
         # Coverage check: the footers declare the full Spalte/Zeile spans, so
         # the last column/row index is the expected total. Seeding these from
@@ -340,20 +386,24 @@ def parse_native_matrix(path: str, *, include_removed: bool = False) -> MatrixRe
     if res.expected_columns != len(res.persons):
         res.warnings.append(
             f"matrix footer states {res.expected_columns} column(s) but "
-            f"{len(res.persons)} were read")
+            f"{len(res.persons)} were read"
+        )
     if res.expected_rows != len(res.doors):
         res.warnings.append(
             f"matrix footer states {res.expected_rows} row(s) but "
-            f"{len(res.doors)} were read")
+            f"{len(res.doors)} were read"
+        )
     unreadable = [p.column for p in res.persons if not p.serial_valid]
     if unreadable:
         res.warnings.append(
             f"{len(unreadable)} column(s) have a serial truncated in the PDF "
-            f"(e.g. '02UM6…') and can only be imported once resolved by hand")
+            f"(e.g. '02UM6…') and can only be imported once resolved by hand"
+        )
     return res
 
 
 # --- geometry ----------------------------------------------------------------
+
 
 def _long_lines(bw, region, axis, nbands=24, thresh=140, min_gap=8):
     """Positions of ruled lines spanning a whole region axis.
@@ -428,11 +478,13 @@ def _isolate_center_band(img, line_frac=0.80):
     if bbox is None:
         return None
     bx0, by0, bx1, by1 = bbox
-    return band.crop((max(0, bx0 - 4), max(0, by0 - 2),
-                      min(w, bx1 + 4), min(band.height, by1 + 2)))
+    return band.crop(
+        (max(0, bx0 - 4), max(0, by0 - 2), min(w, bx1 + 4), min(band.height, by1 + 2))
+    )
 
 
 # --- OCR ---------------------------------------------------------------------
+
 
 class _Ocr:
     """A tesseract runner bound to one scratch file."""
@@ -450,14 +502,15 @@ class _Ocr:
     def read(self, img, psm=7, scale=2, whitelist=None) -> str:
         if img is None:
             return ""
-        img = img.resize((img.width * scale, img.height * scale),
-                         Image.Resampling.LANCZOS)
+        img = img.resize(
+            (img.width * scale, img.height * scale), Image.Resampling.LANCZOS
+        )
         img = ImageOps.expand(img, border=24, fill=255)
         img.save(self._path)
         cmd = ["tesseract", self._path, "stdout", "--psm", str(psm)]
         if whitelist:
             cmd += ["-c", f"tessedit_char_whitelist={whitelist}"]
-        out = subprocess.run(cmd, capture_output=True, text=True)
+        out = subprocess.run(cmd, capture_output=True, text=True, check=False)
         return out.stdout.strip()
 
     def read_serial(self, img) -> tuple[str, str, bool, bool]:
@@ -470,8 +523,9 @@ class _Ocr:
         """
         reads = []
         for psm, scale in ((7, 3), (8, 4), (13, 3)):
-            raw = self.read(img.copy(), psm=psm, scale=scale,
-                            whitelist=_SERIAL_CHARS).replace(" ", "")
+            raw = self.read(
+                img.copy(), psm=psm, scale=scale, whitelist=_SERIAL_CHARS
+            ).replace(" ", "")
             raw = raw.strip("-") if not raw.startswith(("T-", "TC-")) else raw
             if raw:
                 reads.append((raw, *repair_serial(raw)))
@@ -481,7 +535,8 @@ class _Ocr:
             for raw, serial, _v, suspect in valid:
                 counts.setdefault(serial, [0, suspect, raw])[0] += 1
             serial, (_n, suspect, raw) = max(
-                counts.items(), key=lambda kv: (kv[1][0], not kv[1][1]))
+                counts.items(), key=lambda kv: (kv[1][0], not kv[1][1])
+            )
             return serial, raw, True, suspect or len(counts) > 1
         if reads:
             return reads[0][1], reads[0][0], False, True
@@ -496,6 +551,7 @@ class _Ocr:
 
 
 # --- cell classification -------------------------------------------------------
+
 
 def _classify_cell(gray, box, inset=9) -> str:
     """'empty' | 'x' | 'faint' | 'hatch' for one grid cell.
@@ -534,16 +590,17 @@ def _classify_cell(gray, box, inset=9) -> str:
         return "empty"
     ink_frac = sum(1 for p in pixels if p < INK_LEVEL) / n
     solid = sum(1 for p in pixels if p < SOLID_LEVEL) / n
-    v = [1.0 if p < INK_LEVEL else 0.0
-         for p in cell.resize((3, 3), Image.Resampling.BOX).getdata()]
+    v = [
+        1.0 if p < INK_LEVEL else 0.0
+        for p in cell.resize((3, 3), Image.Resampling.BOX).getdata()
+    ]
     center = v[4]
-    diag = (v[0] + v[2] + v[4] + v[6] + v[8]) / 5 \
-        - (v[1] + v[3] + v[5] + v[7]) / 4
+    diag = (v[0] + v[2] + v[4] + v[6] + v[8]) / 5 - (v[1] + v[3] + v[5] + v[7]) / 4
     if center >= CELL_X_CENTER and solid >= CELL_X_SOLID:
         if diag >= CELL_X_CONTRAST:
             return "x"
         if ink_frac < CELL_THIN_X_INK and diag >= CELL_THIN_X_CONTRAST:
-            return "x"                 # thin × on white
+            return "x"  # thin × on white
     if ink_frac < CELL_FAINT_MAX_INK:
         # Light-grey content, no solid stroke and no dense hatch fill.
         return "faint"
@@ -563,7 +620,8 @@ def parse_matrix_image(path: str) -> MatrixResult:
     if not tesseract_available():
         raise RuntimeError(
             "reading matrix images requires the 'tesseract' OCR binary "
-            "(e.g. `brew install tesseract`)")
+            "(e.g. `brew install tesseract`)"
+        )
 
     res = MatrixResult(source_file=os.path.basename(path), ocr_scan=True)
     im = Image.open(path).convert("L")
@@ -583,8 +641,11 @@ def _parse_into(res, im, bw, W, H, ocr):
         res.warnings.append("no matrix grid found in the image")
         return
 
-    columns = [(vlines[i], vlines[i + 1]) for i in range(len(vlines) - 1)
-               if 20 <= vlines[i + 1] - vlines[i] <= 200]
+    columns = [
+        (vlines[i], vlines[i + 1])
+        for i in range(len(vlines) - 1)
+        if 20 <= vlines[i + 1] - vlines[i] <= 200
+    ]
 
     # The axis-label column tells us where each header band lies. Search
     # the leftmost columns for one whose bands read SN / PB / EXPIRY. The
@@ -597,12 +658,13 @@ def _parse_into(res, im, bw, W, H, ocr):
     for idx, (x0, x1) in enumerate(columns[:6]):
         hl = _long_lines(bw, (x0 + 4, 0, x1 - 4, H), "h", nbands=8)
         cand = {}
-        for y0, y1 in zip(hl[:9], hl[1:10]):
+        for y0, y1 in pairwise(hl[:10]):
             if y1 - y0 < 24:
                 continue
             crop = im.crop((int(x0) + 4, int(y0) + 3, int(x1) - 4, int(y1) - 3))
             label = ocr.read_text(
-                _isolate_center_band(crop.transpose(Image.Transpose.ROTATE_270)))
+                _isolate_center_band(crop.transpose(Image.Transpose.ROTATE_270))
+            )
             label = label.upper().replace(" ", "")
             if label in axis_names or label.startswith("NAME"):
                 cand[label] = (y0, y1)
@@ -610,9 +672,10 @@ def _parse_into(res, im, bw, W, H, ocr):
             bands = cand
             label_idx = idx
             break
-    if bands is None:
+    if bands is None or label_idx is None:
         res.warnings.append(
-            "could not locate the NAME/SN axis labels — not a matrix image?")
+            "could not locate the NAME/SN axis labels — not a matrix image?"
+        )
         return
 
     sn_y0, sn_y1 = bands["SN"]
@@ -622,7 +685,7 @@ def _parse_into(res, im, bw, W, H, ocr):
 
     # --- person columns -------------------------------------------------
     person_cols = []
-    for x0, x1 in columns[label_idx + 1:]:
+    for x0, x1 in columns[label_idx + 1 :]:
         cell = im.crop((int(x0), int(sn_y0) + 2, int(x1), int(sn_y1) - 2))
         cell = _isolate_center_band(cell.transpose(Image.Transpose.ROTATE_270))
         if cell is None:
@@ -630,21 +693,30 @@ def _parse_into(res, im, bw, W, H, ocr):
         serial, raw, valid, suspect = ocr.read_serial(cell)
         if not raw:
             continue
-        name_crop = im.crop((int(x0) + 2, int(nm_y0) + 2,
-                             int(x1) - 2, int(nm_y1) - 2))
-        name = ocr.read_text(_isolate_center_band(
-            name_crop.transpose(Image.Transpose.ROTATE_270)))
+        name_crop = im.crop((int(x0) + 2, int(nm_y0) + 2, int(x1) - 2, int(nm_y1) - 2))
+        name = ocr.read_text(
+            _isolate_center_band(name_crop.transpose(Image.Transpose.ROTATE_270))
+        )
         person_cols.append(((x0, x1), serial, raw, valid, suspect, name))
 
     for i, ((x0, x1), serial, raw, valid, suspect, name) in enumerate(
-            person_cols, start=1):
+        person_cols, start=1
+    ):
         asta, person = None, name
         m = RE_ASTA.match(name)
         if m:
             asta, person = int(m.group(1)), m.group(2).strip()
-        res.persons.append(MatrixPerson(
-            column=i, serial=serial, raw_serial=raw, serial_valid=valid,
-            serial_suspect=suspect, asta_number=asta, person_name=person))
+        res.persons.append(
+            MatrixPerson(
+                column=i,
+                serial=serial,
+                raw_serial=raw,
+                serial_valid=valid,
+                serial_suspect=suspect,
+                asta_number=asta,
+                person_name=person,
+            )
+        )
 
     if not person_cols:
         res.warnings.append("no transponder columns could be read")
@@ -656,32 +728,34 @@ def _parse_into(res, im, bw, W, H, ocr):
     # margin would otherwise invert the crop box).
     label_left = columns[label_idx][0]
     left_margin = max(0, min(70, int(label_left) - 40))
-    hrows = _long_lines(bw, (left_margin, grid_top, label_left, H), "h",
-                        nbands=16)
-    row_bounds = [(a, b) for a, b in zip(hrows, hrows[1:]) if b - a > 20]
+    hrows = _long_lines(bw, (left_margin, grid_top, label_left, H), "h", nbands=16)
+    row_bounds = [(a, b) for a, b in pairwise(hrows) if b - a > 20]
     if not row_bounds:
         res.warnings.append("no door rows found below the header")
         return
 
-    subv = _long_lines(bw, (0, grid_top, label_left, H), "v", nbands=8,
-                       thresh=120)
-    subcells = [(a, b) for a, b in zip(subv, subv[1:]) if b - a > 12]
+    subv = _long_lines(bw, (0, grid_top, label_left, H), "v", nbands=8, thresh=120)
+    subcells = [(a, b) for a, b in pairwise(subv) if b - a > 12]
 
     # Header row maps the attribute sub-columns (RN = room, E = floor).
     attr_at = {}
     name_cell = max(subcells, key=lambda c: c[1] - c[0]) if subcells else None
     hy0, hy1 = row_bounds[0]
     for cx0, cx1 in subcells:
-        label = ocr.read_text(_isolate_center_band(
-            im.crop((int(cx0) + 4, int(hy0) + 2, int(cx1) - 4, int(hy1) - 2))))
+        label = ocr.read_text(
+            _isolate_center_band(
+                im.crop((int(cx0) + 4, int(hy0) + 2, int(cx1) - 4, int(hy1) - 2))
+            )
+        )
         if label.upper() in DOOR_ATTR_LABELS:
             attr_at[label.upper()] = (cx0, cx1)
 
     def row_cell_text(bounds, r0, r1):
         if bounds is None:
             return ""
-        crop = im.crop((int(bounds[0]) + 5, int(r0) + 2,
-                        int(bounds[1]) - 5, int(r1) - 2))
+        crop = im.crop(
+            (int(bounds[0]) + 5, int(r0) + 2, int(bounds[1]) - 5, int(r1) - 2)
+        )
         return ocr.read_text(_isolate_center_band(crop))
 
     row_no = 0
@@ -692,18 +766,21 @@ def _parse_into(res, im, bw, W, H, ocr):
         if not name or not re.search(r"[0-9A-Za-zÀ-ÿ]", name):
             continue
         row_no += 1
-        room = re.sub(r"[|()\[\]]", "",
-                      row_cell_text(attr_at.get("RN"), r0, r1)).strip()
-        floor = re.sub(r"[|()\[\]]", "",
-                       row_cell_text(attr_at.get("E"), r0, r1)).strip()
-        floor = floor.replace("0G", "OG")     # floors are '1.OG', not '1.0G'
-        res.doors.append(MatrixDoor(row=row_no, name=name,
-                                    room_number=room, floor=floor))
+        room = re.sub(
+            r"[|()\[\]]", "", row_cell_text(attr_at.get("RN"), r0, r1)
+        ).strip()
+        floor = re.sub(
+            r"[|()\[\]]", "", row_cell_text(attr_at.get("E"), r0, r1)
+        ).strip()
+        floor = floor.replace("0G", "OG")  # floors are '1.OG', not '1.0G'
+        res.doors.append(
+            MatrixDoor(row=row_no, name=name, room_number=room, floor=floor)
+        )
         row_geo.append((row_no, r0, r1))
 
     # --- marks ------------------------------------------------------------
     hatched_cols = []
-    faint = []          # (col, row) of transitional / ambiguous marks
+    faint = []  # (col, row) of transitional / ambiguous marks
     for col_i, ((x0, x1), *_rest) in enumerate(person_cols, start=1):
         n_hatch = 0
         for row_no, r0, r1 in row_geo:
@@ -719,22 +796,30 @@ def _parse_into(res, im, bw, W, H, ocr):
     if hatched_cols:
         names = ", ".join(
             (res.persons[c - 1].person_name or res.persons[c - 1].serial)
-            for c in hatched_cols)
+            for c in hatched_cols
+        )
         res.warnings.append(
             f"{len(hatched_cols)} column(s) are greyed out (deactivated or "
             f"expired transponders): {names}; hatching was not counted as "
-            f"an authorization")
+            f"an authorization"
+        )
     if faint:
-        door = {r: n for r, _a, _b in row_geo
-                for n in [next((d.name for d in res.doors if d.row == r), r)]}
+        door = {
+            r: n
+            for r, _a, _b in row_geo
+            for n in [next((d.name for d in res.doors if d.row == r), r)]
+        }
         detail = "; ".join(
             f"{res.persons[c - 1].person_name or res.persons[c - 1].serial} × "
-            f"{door.get(r, r)}" for c, r in faint[:8])
+            f"{door.get(r, r)}"
+            for c, r in faint[:8]
+        )
         more = "" if len(faint) <= 8 else f" (+{len(faint) - 8} more)"
         res.warnings.append(
             f"{len(faint)} cell(s) hold a faint/partial mark (an "
             f"authorization being added or removed, not yet programmed); "
-            f"these were NOT counted — review by eye: {detail}{more}")
+            f"these were NOT counted — review by eye: {detail}{more}"
+        )
 
     # --- footer (often cropped off screenshots) ----------------------------
     # An image is a single matrix slice, so the footer's Zeile/Spalte give
@@ -743,8 +828,7 @@ def _parse_into(res, im, bw, W, H, ocr):
     # was actually read — using the end index would wrongly flag a perfect
     # mid-matrix crop as inconsistent.
     tail = im.crop((0, int(row_bounds[-1][1]), min(W, 1600), H))
-    m = RE_FOOTER.search(ocr.read(_isolate_center_band(tail), psm=7, scale=2)
-                         or "")
+    m = RE_FOOTER.search(ocr.read(_isolate_center_band(tail), psm=7, scale=2) or "")
     if m:
         z1, z2, s1, s2 = (int(g) for g in m.groups())
         res.expected_rows = (z2 - z1 + 1) if z2 >= z1 else 0
@@ -752,12 +836,15 @@ def _parse_into(res, im, bw, W, H, ocr):
         if res.expected_columns != len(res.persons):
             res.warnings.append(
                 f"footer states {res.expected_columns} column(s) "
-                f"(Spalte {s1}-{s2}) but {len(res.persons)} were read")
+                f"(Spalte {s1}-{s2}) but {len(res.persons)} were read"
+            )
         if res.expected_rows and res.expected_rows != len(res.doors):
             res.warnings.append(
                 f"footer states {res.expected_rows} door row(s) "
-                f"(Zeile {z1}-{z2}) but {len(res.doors)} were read")
+                f"(Zeile {z1}-{z2}) but {len(res.doors)} were read"
+            )
     else:
         res.warnings.append(
             "no 'Zeile/Spalte' footer found in the image — column and row "
-            "counts could not be cross-checked")
+            "counts could not be cross-checked"
+        )

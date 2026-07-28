@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from django.db import models
 from django.db.models.functions import Lower
 
@@ -62,20 +64,23 @@ class Group(models.Model):
     def clean(self):
         super().clean()
         if self.export_code:
-            self.export_code = normalize_export_code(self.export_code)
+            cast(Any, self).export_code = normalize_export_code(
+                cast(str, self.export_code)
+            )
 
     def save(self, *args, **kwargs):
         if self.export_code:
-            self.export_code = normalize_export_code(self.export_code)
+            export_code = normalize_export_code(cast(str, self.export_code))
         elif self._state.adding:
             used = (
                 type(self)
                 .objects.exclude(pk=self.pk)
                 .values_list("export_code", flat=True)
             )
-            self.export_code = derive_export_code(self.name, used)
+            export_code = derive_export_code(cast(str, self.name), used)
         else:
-            self.export_code = normalize_export_code(self.export_code)
+            export_code = normalize_export_code(cast(str, self.export_code))
+        cast(Any, self).export_code = export_code
         return super().save(*args, **kwargs)
 
     def __str__(self):

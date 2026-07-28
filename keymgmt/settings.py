@@ -45,13 +45,12 @@ def _secret_key():
     if val := _env("KEYMGMT_SECRET_KEY"):
         return val
     path = _env("KEYMGMT_SECRET_KEY_FILE")
-    if path and Path(path).exists():
+    if path and Path(path).exists() and (key := Path(path).read_text().strip()):
         # A present-but-blank secret file (provisioning race, touched placeholder)
         # must fall through to the insecure fallback so the boot guard below
         # refuses to start, rather than yielding SECRET_KEY="" (which slips the
         # guard and 500s every request instead).
-        if key := Path(path).read_text().strip():
-            return key
+        return key
     return _INSECURE_KEY
 
 
@@ -65,7 +64,8 @@ DEBUG = _env_bool("KEYMGMT_DEBUG", False)
 if not DEBUG and not TESTING and SECRET_KEY == _INSECURE_KEY:
     raise ImproperlyConfigured(
         "Set KEYMGMT_SECRET_KEY (or KEYMGMT_SECRET_KEY_FILE) for a non-DEBUG "
-        "deployment — refusing to run with the built-in insecure key.")
+        "deployment — refusing to run with the built-in insecure key."
+    )
 
 # Hosts allowed to serve the app (comma-separated). Behind nginx this is your
 # domain; loopback is kept for local health checks.
@@ -79,58 +79,58 @@ CSRF_TRUSTED_ORIGINS = _env_list("KEYMGMT_CSRF_TRUSTED_ORIGINS")
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'access',
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "access",
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = 'keymgmt.urls'
+ROOT_URLCONF = "keymgmt.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'keymgmt.wsgi.application'
+WSGI_APPLICATION = "keymgmt.wsgi.application"
 
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': _env("KEYMGMT_DB_PATH", str(BASE_DIR / 'db.sqlite3')),
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": _env("KEYMGMT_DB_PATH", str(BASE_DIR / "db.sqlite3")),
         # SQLite concurrency: wait (don't error) on a locked DB, and take the
         # write lock up front so atomic blocks can't deadlock mid-way. WAL and
         # the other pragmas are set per-connection in access/apps.py.
-        'OPTIONS': {
-            'timeout': 15,
-            'transaction_mode': 'IMMEDIATE',
+        "OPTIONS": {
+            "timeout": 15,
+            "transaction_mode": "IMMEDIATE",
         },
     }
 }
@@ -141,16 +141,16 @@ DATABASES = {
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
 
@@ -170,12 +170,12 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = "static/"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
 # --- Authentication: gate the whole UI behind a login ----------------------

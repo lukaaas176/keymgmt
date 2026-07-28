@@ -31,7 +31,8 @@ class Command(BaseCommand):
         if not username or not password:
             self.stdout.write(
                 "KEYMGMT_ADMIN_USERNAME / password not set — skipping user "
-                "provisioning.")
+                "provisioning."
+            )
             return
 
         User = get_user_model()
@@ -43,5 +44,8 @@ class Command(BaseCommand):
         user.is_staff = True
         user.is_superuser = True
         user.save()
-        self.stdout.write(self.style.SUCCESS(
-            f"{'Created' if created else 'Updated'} login user {username!r}."))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"{'Created' if created else 'Updated'} login user {username!r}."
+            )
+        )
